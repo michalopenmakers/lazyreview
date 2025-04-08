@@ -46,6 +46,12 @@ func CodeReview(cfg *config.Config, codeChanges string) (string, error) {
 	} else {
 		promptText = "You are an experienced developer performing a code review. Your task is to find potential bugs, security vulnerabilities, performance issues, and suggest improvements to the code quality. Be specific and helpful. Provide solution examples when possible."
 	}
+
+	const maxInputLength = 2000
+	if len(codeChanges) > maxInputLength {
+		codeChanges = codeChanges[:maxInputLength] + "\n... [Content truncated due to token limits]"
+	}
+
 	messages := []Message{
 		{
 			Role:    "system",

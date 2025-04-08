@@ -1,6 +1,8 @@
 package review
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/michalopenmakers/lazyreview/notifications"
 	"github.com/michalopenmakers/lazyreview/openai"
 	"github.com/michalopenmakers/lazyreview/state"
+	"github.com/michalopenmakers/lazyreview/store"
 )
 
 type CodeReview struct {
@@ -208,6 +211,17 @@ func reviewGitLabMR(cfg *config.Config, mr gitlab.MergeRequest) {
 		notifications.SendNotification(fmt.Sprintf("Error during review of GitLab MR #%d: %v", review.MRID, err))
 		return
 	}
+	h := sha1.New()
+	h.Write([]byte(codeChanges))
+	currentHash := hex.EncodeToString(h.Sum(nil))
+	lastHash, err := store.GetLastHash(review.ID)
+	if err == nil && lastHash == currentHash {
+		review.Status = "completed"
+		review.Review = "No new changes since last review."
+		saveReview(review)
+		notifications.SendNotification(fmt.Sprintf("No new changes for GitLab MR #%d", review.MRID))
+		return
+	}
 	aiReview, err := openai.CodeReview(cfg, codeChanges)
 	if err != nil {
 		review.Status = "error"
@@ -219,6 +233,7 @@ func reviewGitLabMR(cfg *config.Config, mr gitlab.MergeRequest) {
 	review.Status = "completed"
 	review.Review = aiReview
 	saveReview(review)
+	_ = store.UpdateLastHash(review.ID, currentHash)
 	if isFirstReview {
 		notifications.SendNotification(fmt.Sprintf("Completed first full review of GitLab MR #%d: %s", review.MRID, review.Title))
 	} else {
@@ -262,6 +277,17 @@ func reviewGitHubPR(cfg *config.Config, pr github.PullRequest) {
 		notifications.SendNotification(fmt.Sprintf("Error during review of GitHub PR #%d: %v", review.PRID, err))
 		return
 	}
+	h := sha1.New()
+	h.Write([]byte(codeChanges))
+	currentHash := hex.EncodeToString(h.Sum(nil))
+	lastHash, err := store.GetLastHash(review.ID)
+	if err == nil && lastHash == currentHash {
+		review.Status = "completed"
+		review.Review = "No new changes since last review."
+		saveReview(review)
+		notifications.SendNotification(fmt.Sprintf("No new changes for GitHub PR #%d", review.PRID))
+		return
+	}
 	aiReview, err := openai.CodeReview(cfg, codeChanges)
 	if err != nil {
 		review.Status = "error"
@@ -273,6 +299,7 @@ func reviewGitHubPR(cfg *config.Config, pr github.PullRequest) {
 	review.Status = "completed"
 	review.Review = aiReview
 	saveReview(review)
+	_ = store.UpdateLastHash(review.ID, currentHash)
 	if isFirstReview {
 		notifications.SendNotification(fmt.Sprintf("Completed first full review of GitHub PR #%d: %s", review.PRID, review.Title))
 	} else {

@@ -110,6 +110,15 @@ func showSettingsDialog() {
 	reviewRequestsIntervalUnit := widget.NewLabel("seconds")
 	reviewRequestsLayout := container.NewHBox(reviewRequestsIntervalEntry, reviewRequestsIntervalUnit)
 
+	aiModelSelect := widget.NewSelect([]string{"o3-mini-high", "o3-mini"}, func(selected string) {
+		currentConfig.AIModelConfig.Model = selected
+	})
+	aiModelSelect.Selected = currentConfig.AIModelConfig.Model
+
+	aiApiKeyEntry := widget.NewPasswordEntry()
+	aiApiKeyEntry.SetText(currentConfig.AIModelConfig.ApiKey)
+	aiApiKeyEntry.PlaceHolder = "AI API Key"
+
 	form := &widget.Form{
 		Items: []*widget.FormItem{
 			{Text: "GitLab", Widget: gitlabEnabledCheck},
@@ -120,6 +129,8 @@ func showSettingsDialog() {
 			{Text: "GitHub Token", Widget: githubTokenEntry},
 			{Text: "MR/PR polling interval", Widget: mergeRequestsLayout},
 			{Text: "Review polling interval", Widget: reviewRequestsLayout},
+			{Text: "AI Model", Widget: aiModelSelect},
+			{Text: "AI API Key", Widget: aiApiKeyEntry},
 		},
 		OnSubmit: func() {
 			currentConfig.GitLabConfig.ApiUrl = gitlabUrlEntry.Text
@@ -134,6 +145,10 @@ func showSettingsDialog() {
 			if err == nil && rrInterval > 0 {
 				currentConfig.ReviewRequestsPollingInterval = rrInterval
 			}
+			// Aktualizacja konfiguracji AI
+			currentConfig.AIModelConfig.Model = aiModelSelect.Selected
+			currentConfig.AIModelConfig.ApiKey = aiApiKeyEntry.Text
+
 			err = config.SaveConfig(currentConfig)
 			if err != nil {
 				dialog.ShowError(err, mainWindow)
