@@ -37,10 +37,6 @@ var (
 	stopMonitoring   chan struct{}
 )
 
-func PerformReview(input string) string {
-	return "Review: " + input + " -> "
-}
-
 func GetCodeReviews() []CodeReview {
 	reviewsJSON := state.GetState()
 	if reviewsJSON == "" {

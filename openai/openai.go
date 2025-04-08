@@ -33,10 +33,6 @@ type CompletionResponse struct {
 	} `json:"choices"`
 }
 
-func Query(cfg *config.Config, prompt string) string {
-	return "Response for: " + prompt
-}
-
 func CodeReview(cfg *config.Config, codeChanges string) (string, error) {
 	url := "https://api.openai.com/v1/chat/completions"
 	isFullRepo := strings.Contains(codeChanges, "Entire project code")
