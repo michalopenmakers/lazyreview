@@ -6,6 +6,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -25,13 +26,15 @@ type ReviewListItem struct {
 
 var currentConfig *config.Config
 var mainWindow fyne.Window
+var mainApp fyne.App
 
 func StartUI() {
-	a := app.New()
-	w := a.NewWindow("LazyReview")
+	mainApp = app.New()
+	w := mainApp.NewWindow("LazyReview")
 	w.Resize(fyne.NewSize(800, 600))
 	mainWindow = w
 
+	setupSystemTray()
 	currentConfig = config.LoadConfig()
 
 	title := widget.NewLabel("LazyReview - AI Code Review")
@@ -62,6 +65,10 @@ func StartUI() {
 
 	w.SetContent(content)
 
+	w.SetCloseIntercept(func() {
+		hideWindow()
+	})
+
 	go func() {
 		for {
 			time.Sleep(5 * time.Second)
@@ -71,6 +78,32 @@ func StartUI() {
 	updateReviewsList(reviewsList, reviewDetails)
 
 	w.ShowAndRun()
+}
+
+func setupSystemTray() {
+	if desk, ok := mainApp.(desktop.App); ok {
+		showItem := fyne.NewMenuItem("Pokaż", showWindow)
+		hideItem := fyne.NewMenuItem("Ukryj", hideWindow)
+		settingsItem := fyne.NewMenuItem("Ustawienia", showSettingsDialog)
+		quitItem := fyne.NewMenuItem("Zakończ", func() {
+			mainApp.Quit()
+		})
+
+		menu := fyne.NewMenu("LazyReview", showItem, hideItem, fyne.NewMenuItemSeparator(), settingsItem, fyne.NewMenuItemSeparator(), quitItem)
+		desk.SetSystemTrayMenu(menu)
+
+		desk.SetSystemTrayIcon(theme.FyneLogo())
+	}
+}
+
+func showWindow() {
+	mainWindow.Show()
+	mainWindow.RequestFocus()
+}
+
+func hideWindow() {
+	mainWindow.Hide()
+	notifications.SendNotification("LazyReview działa w tle. Kliknij ikonę w zasobniku, aby pokazać.")
 }
 
 func showSettingsDialog() {
