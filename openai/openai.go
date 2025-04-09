@@ -3,8 +3,10 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -81,7 +83,7 @@ func CodeReview(cfg *config.Config, codeChanges string) (string, error) {
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
 		if err != nil {
-			fmt.Println("Error closing response body:", err)
+			slog.Error("Error closing response body", "error", err)
 		}
 	}(resp.Body)
 	if resp.StatusCode != http.StatusOK {
@@ -93,7 +95,8 @@ func CodeReview(cfg *config.Config, codeChanges string) (string, error) {
 		return "", err
 	}
 	if len(response.Choices) == 0 {
-		return "", fmt.Errorf("no response choices returned")
+		slog.Error("No response choices returned from OpenAI API")
+		return "", errors.New("no response choices returned")
 	}
 	return response.Choices[0].Message.Content, nil
 }

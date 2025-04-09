@@ -6,9 +6,11 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -25,12 +27,72 @@ type ReviewListItem struct {
 
 var currentConfig *config.Config
 var mainWindow fyne.Window
+var mainApp fyne.App
 
 func StartUI() {
-	a := app.New()
+	a := app.NewWithID("com.michalopenmakers.lazyreview")
+	mainApp = a
+
+	// Ustawienie właściwości aplikacji dla macOS
+	if runtime.GOOS == "darwin" {
+		a.SetIcon(resourceAppIconPng())
+	}
+
 	w := a.NewWindow("LazyReview")
 	w.Resize(fyne.NewSize(800, 600))
 	mainWindow = w
+
+	// Rejestrujemy funkcję przywracania okna, która będzie wywoływana po kliknięciu w powiadomienie
+	notifications.RegisterShowWindowCallback(func() {
+		if mainWindow != nil {
+			if runtime.GOOS == "darwin" {
+				mainWindow.Show()
+				mainWindow.RequestFocus()
+
+				// Usunięto wysyłanie dodatkowego powiadomienia, aby przerwać pętlę aktywacji
+				go func() {
+					time.Sleep(200 * time.Millisecond)
+					// Druga próba po krótkim opóźnieniu
+					time.Sleep(300 * time.Millisecond)
+					mainWindow.Show()
+					mainWindow.RequestFocus()
+					if desk, ok := mainApp.(desktop.App); ok {
+						desk.SetSystemTrayIcon(resourceAppIconPng())
+					}
+				}()
+			} else {
+				mainWindow.Show()
+				mainWindow.RequestFocus()
+			}
+		}
+	})
+
+	// Okno nie zamyka się całkowicie przy kliknięciu "X", tylko się ukrywa
+	w.SetCloseIntercept(func() {
+		notifications.SendNotification("Application minimized to system tray")
+		w.Hide()
+	})
+
+	// Tworzymy menu systemowe
+	if desk, ok := a.(desktop.App); ok {
+		systrayMenu := fyne.NewMenu("LazyReview",
+			fyne.NewMenuItem("Show", func() {
+				mainWindow.Show()
+				mainWindow.RequestFocus()
+			}),
+			fyne.NewMenuItem("Exit", func() {
+				a.Quit()
+			}),
+		)
+		desk.SetSystemTrayMenu(systrayMenu)
+
+		// Ustawiamy ikonę w tacce systemowej
+		if runtime.GOOS == "darwin" {
+			desk.SetSystemTrayIcon(resourceAppIconPng())
+		} else {
+			desk.SetSystemTrayIcon(theme.InfoIcon())
+		}
+	}
 
 	currentConfig = config.LoadConfig()
 
@@ -71,6 +133,42 @@ func StartUI() {
 	updateReviewsList(reviewsList, reviewDetails)
 
 	w.ShowAndRun()
+}
+
+// ShowMainWindow przywraca główne okno aplikacji
+func ShowMainWindow() {
+	if mainWindow != nil {
+		if runtime.GOOS == "darwin" {
+			// Bardziej rozbudowane podejście do przywracania okna na macOS
+			// Pierwsza próba
+			mainWindow.Show()
+			mainWindow.RequestFocus()
+
+			// Dodatkowe działania w osobnej goroutinie
+			go func() {
+				// Dodatkowe opóźnienie
+				time.Sleep(200 * time.Millisecond)
+
+				// Druga próba
+				mainWindow.Show()
+				mainWindow.RequestFocus()
+
+				if mainApp != nil {
+					mainApp.SendNotification(&fyne.Notification{
+						Title:   "LazyReview",
+						Content: "Application activated",
+					})
+
+					if desk, ok := mainApp.(desktop.App); ok {
+						desk.SetSystemTrayIcon(theme.InfoIcon())
+					}
+				}
+			}()
+		} else {
+			mainWindow.Show()
+			mainWindow.RequestFocus()
+		}
+	}
 }
 
 func showSettingsDialog() {
