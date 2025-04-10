@@ -25,7 +25,6 @@ var currentConfig *config.Config
 var mainWindow fyne.Window
 var mainApp fyne.App
 var statusInfo *widget.Label
-var logEntry *widget.Entry
 var currentReviewIndex = -1
 
 func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry) {
@@ -46,7 +45,7 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 			reviewIndex := i
 			reviewButton := widget.NewButton(review.Title, func() {
 				if reviewDetails != nil {
-					reviewDetails.SetText(review.ReviewText) // Zmieniono z Review na ReviewText, aby odpowiadało nazwie pola w strukturze
+					reviewDetails.SetText(review.ReviewText)
 					currentReviewIndex = reviewIndex
 					setStatus(fmt.Sprintf("Showing review: %s", review.Title))
 				}
@@ -56,11 +55,11 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 
 		if currentReviewIndex >= 0 && currentReviewIndex < len(reviews) {
 			if reviewDetails != nil {
-				reviewDetails.SetText(reviews[currentReviewIndex].ReviewText) // Zmieniono z Review na ReviewText
+				reviewDetails.SetText(reviews[currentReviewIndex].ReviewText)
 			}
 		} else if reviewDetails != nil && len(reviews) > 0 {
 			currentReviewIndex = 0
-			reviewDetails.SetText(reviews[0].ReviewText) // Zmieniono z Review na ReviewText
+			reviewDetails.SetText(reviews[0].ReviewText)
 		}
 	}
 
@@ -101,16 +100,15 @@ func StartUI() {
 
 	statusInfo = widget.NewLabel("")
 
-	logEntry = widget.NewMultiLineEntry()
-	logEntry.Disable()
+	logsDisplay := widget.NewMultiLineEntry()
+	logsDisplay.TextStyle = fyne.TextStyle{Monospace: true}
+	logsDisplay.Disable()
+	logsDisplay.Wrapping = fyne.TextWrapBreak
 
-	logLabel := widget.NewLabel("")
-	logLabel.Alignment = fyne.TextAlignLeading
-	logLabel.TextStyle = fyne.TextStyle{
-		Monospace: true,
-	}
-
-	customLabel := container.NewMax(logLabel)
+	copyLogsButton := widget.NewButtonWithIcon("Copy logs", theme.ContentCopyIcon(), func() {
+		mainWindow.Clipboard().SetContent(logsDisplay.Text)
+		setStatus("Logs copied to clipboard.")
+	})
 
 	updateLogs = func() {
 		logs := logger.GetLogs()
@@ -119,16 +117,21 @@ func StartUI() {
 			formattedLogs[i] = " " + log
 		}
 		logText := strings.Join(formattedLogs, "\n")
-		logLabel.SetText(logText)
+		logsDisplay.SetText(logText)
 	}
 
-	logContainer := container.NewVScroll(customLabel)
-	logContainer.SetMinSize(fyne.NewSize(0, 100))
+	logsScrollContainer := container.NewScroll(logsDisplay)
+	logsScrollContainer.SetMinSize(fyne.NewSize(0, 150))
+
+	logsContainer := container.NewVBox(
+		container.NewBorder(nil, nil, nil, copyLogsButton, widget.NewLabel("Logs:")),
+		logsScrollContainer,
+	)
 
 	bottomContainer := container.NewVBox(
 		container.New(layout.NewHBoxLayout(), statusInfo),
 		widget.NewSeparator(),
-		logContainer,
+		logsContainer,
 	)
 
 	content := container.NewBorder(
