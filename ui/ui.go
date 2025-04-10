@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/michalopenmakers/lazyreview/business"
 	"github.com/michalopenmakers/lazyreview/config"
+	"github.com/michalopenmakers/lazyreview/logger"
 	"github.com/michalopenmakers/lazyreview/notifications"
 )
 
@@ -22,9 +25,45 @@ var currentConfig *config.Config
 var mainWindow fyne.Window
 var mainApp fyne.App
 var statusInfo *widget.Label
+var logEntry *widget.Entry
+var currentReviewIndex = -1
 
 func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry) {
-	// ...existing code to update review list...
+	reviews := business.GetReviews()
+	reviewsList.RemoveAll()
+
+	if len(reviews) == 0 {
+		emptyLabel := widget.NewLabel("No reviews available")
+		emptyLabel.Alignment = fyne.TextAlignCenter
+		reviewsList.Add(emptyLabel)
+
+		if reviewDetails != nil {
+			reviewDetails.SetText("")
+		}
+		currentReviewIndex = -1
+	} else {
+		for i, review := range reviews {
+			reviewIndex := i
+			reviewButton := widget.NewButton(review.Title, func() {
+				if reviewDetails != nil {
+					reviewDetails.SetText(review.ReviewText) // Zmieniono z Review na ReviewText, aby odpowiadało nazwie pola w strukturze
+					currentReviewIndex = reviewIndex
+					setStatus(fmt.Sprintf("Showing review: %s", review.Title))
+				}
+			})
+			reviewsList.Add(reviewButton)
+		}
+
+		if currentReviewIndex >= 0 && currentReviewIndex < len(reviews) {
+			if reviewDetails != nil {
+				reviewDetails.SetText(reviews[currentReviewIndex].ReviewText) // Zmieniono z Review na ReviewText
+			}
+		} else if reviewDetails != nil && len(reviews) > 0 {
+			currentReviewIndex = 0
+			reviewDetails.SetText(reviews[0].ReviewText) // Zmieniono z Review na ReviewText
+		}
+	}
+
 	reviewsList.Refresh()
 }
 
@@ -33,6 +72,8 @@ func setStatus(text string) {
 		statusInfo.SetText(text)
 	}
 }
+
+var updateLogs func()
 
 func StartUI() {
 	mainApp = app.New()
@@ -59,17 +100,44 @@ func StartUI() {
 	}, showSettingsDialog)
 
 	statusInfo = widget.NewLabel("")
-	statusBar := container.New(layout.NewHBoxLayout(), statusInfo)
-	setStatus("Application started.")
+
+	logEntry = widget.NewMultiLineEntry()
+	logEntry.Disable()
+
+	logLabel := widget.NewLabel("")
+	logLabel.Alignment = fyne.TextAlignLeading
+	logLabel.TextStyle = fyne.TextStyle{
+		Monospace: true,
+	}
+
+	customLabel := container.NewMax(logLabel)
+
+	updateLogs = func() {
+		logs := logger.GetLogs()
+		formattedLogs := make([]string, len(logs))
+		for i, log := range logs {
+			formattedLogs[i] = " " + log
+		}
+		logText := strings.Join(formattedLogs, "\n")
+		logLabel.SetText(logText)
+	}
+
+	logContainer := container.NewVScroll(customLabel)
+	logContainer.SetMinSize(fyne.NewSize(0, 100))
+
+	bottomContainer := container.NewVBox(
+		container.New(layout.NewHBoxLayout(), statusInfo),
+		widget.NewSeparator(),
+		logContainer,
+	)
 
 	content := container.NewBorder(
 		toolbar,
-		statusBar,
+		bottomContainer,
 		nil,
 		nil,
 		split,
 	)
-
 	mainWindow.SetContent(content)
 
 	mainWindow.SetCloseIntercept(func() {
@@ -80,9 +148,11 @@ func StartUI() {
 		for {
 			time.Sleep(5 * time.Second)
 			updateReviewsList(reviewsListContainer, reviewDetails)
+			updateLogs()
 		}
 	}()
 	updateReviewsList(reviewsListContainer, reviewDetails)
+	updateLogs()
 
 	mainWindow.ShowAndRun()
 }
@@ -156,7 +226,7 @@ func showSettingsDialog() {
 
 	gitlabUrlEntry := widget.NewEntry()
 	gitlabUrlEntry.SetText(currentConfig.GitLabConfig.ApiUrl)
-	gitlabUrlEntry.PlaceHolder = "https://gitlab.com/api/v4"
+	gitlabUrlEntry.PlaceHolder = "e.g. gitlab.com or gitlab.hlag.altemista.cloud"
 
 	gitlabTokenEntry := widget.NewPasswordEntry()
 	gitlabTokenEntry.SetText(currentConfig.GitLabConfig.ApiToken)
@@ -167,13 +237,18 @@ func showSettingsDialog() {
 	})
 	githubEnabledCheck.Checked = currentConfig.GitHubConfig.Enabled
 
-	githubUrlEntry := widget.NewEntry()
-	githubUrlEntry.SetText(currentConfig.GitHubConfig.ApiUrl)
-	githubUrlEntry.PlaceHolder = "https://api.github.com"
-
 	githubTokenEntry := widget.NewPasswordEntry()
 	githubTokenEntry.SetText(currentConfig.GitHubConfig.ApiToken)
 	githubTokenEntry.PlaceHolder = "Personal Access Token"
+
+	githubApiInfo := widget.NewLabel("GitHub API uses the standard URL: https://api.github.com")
+	githubApiInfo.TextStyle = fyne.TextStyle{Italic: true}
+	githubApiInfo.Alignment = fyne.TextAlignLeading
+
+	githubContainer := container.NewVBox(
+		githubTokenEntry,
+		githubApiInfo,
+	)
 
 	mergeRequestsIntervalEntry := widget.NewEntry()
 	mergeRequestsIntervalEntry.SetText(strconv.Itoa(currentConfig.MergeRequestsPollingInterval))
@@ -191,16 +266,24 @@ func showSettingsDialog() {
 
 	openaiModelEntry := widget.NewEntry()
 	openaiModelEntry.SetText(currentConfig.AIModelConfig.Model)
-	openaiModelEntry.PlaceHolder = "OpenAI Model (np. o3-mini-high)"
+	openaiModelEntry.PlaceHolder = "OpenAI Model (e.g. o3-mini-high)"
+
+	gitlabUrlInfo := widget.NewLabel("Enter only the GitLab domain; 'https://' and '/api/v4' will be added automatically")
+	gitlabUrlInfo.TextStyle = fyne.TextStyle{Italic: true}
+	gitlabUrlInfo.Alignment = fyne.TextAlignLeading
+
+	gitlabUrlContainer := container.NewVBox(
+		gitlabUrlEntry,
+		gitlabUrlInfo,
+	)
 
 	form := &widget.Form{
 		Items: []*widget.FormItem{
 			{Text: "GitLab", Widget: gitlabEnabledCheck},
-			{Text: "GitLab API URL", Widget: gitlabUrlEntry},
+			{Text: "GitLab URL", Widget: gitlabUrlContainer},
 			{Text: "GitLab Token", Widget: gitlabTokenEntry},
 			{Text: "GitHub", Widget: githubEnabledCheck},
-			{Text: "GitHub API URL", Widget: githubUrlEntry},
-			{Text: "GitHub Token", Widget: githubTokenEntry},
+			{Text: "GitHub Token", Widget: githubContainer},
 			{Text: "OpenAI API Token", Widget: openaiTokenEntry},
 			{Text: "OpenAI Model", Widget: openaiModelEntry},
 			{Text: "MR/PR polling interval", Widget: mergeRequestsLayout},
@@ -211,7 +294,6 @@ func showSettingsDialog() {
 	saveButton := widget.NewButton("Save", func() {
 		currentConfig.GitLabConfig.ApiUrl = gitlabUrlEntry.Text
 		currentConfig.GitLabConfig.ApiToken = gitlabTokenEntry.Text
-		currentConfig.GitHubConfig.ApiUrl = githubUrlEntry.Text
 		currentConfig.GitHubConfig.ApiToken = githubTokenEntry.Text
 		currentConfig.AIModelConfig.ApiKey = openaiTokenEntry.Text
 		currentConfig.AIModelConfig.Model = openaiModelEntry.Text
@@ -231,7 +313,7 @@ func showSettingsDialog() {
 		}
 		notifications.SendNotification("Configuration saved.")
 		business.RestartMonitoring(currentConfig)
-		dialog.NewInformation("Saved", "Settings saved.", mainWindow).Show()
+		dialog.NewInformation("Settings saved", "Settings saved", mainWindow).Show()
 		setStatus("Settings saved.")
 	})
 

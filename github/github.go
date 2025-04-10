@@ -1,28 +1,273 @@
 package github
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+
 	"github.com/michalopenmakers/lazyreview/config"
+	"github.com/michalopenmakers/lazyreview/logger"
 )
 
 type PullRequest struct {
-	Number     int
+	Number     int `json:"number"`
 	Repository string
-	Title      string
-	HTMLURL    string
+	Title      string `json:"title"`
+	HTMLURL    string `json:"html_url"`
 }
 
-func GetOpenPullRequests(cfg *config.Config) ([]PullRequest, error) {
-	return []PullRequest{}, nil
+func getFullApiUrl(cfg *config.Config) string {
+	return cfg.GitHubConfig.GetGitHubApiUrl()
 }
 
-func GetAssignedPullRequests(cfg *config.Config) ([]PullRequest, error) {
-	return []PullRequest{}, nil
+func GetPullRequestsToReview(cfg *config.Config) ([]PullRequest, error) {
+	logger.Log("Fetching GitHub pull requests assigned for review")
+
+	apiUrl := getFullApiUrl(cfg)
+	url := fmt.Sprintf("%s/issues?filter=assigned&state=open", apiUrl)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error creating request for GitHub PRs: %v", err))
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "token "+cfg.GitHubConfig.ApiToken)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error connecting to GitHub API (%s): %v", apiUrl, err))
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		errMsg := fmt.Sprintf("GitHub API responded with status code %d: %s", resp.StatusCode, string(body))
+		logger.Log(errMsg)
+		return nil, fmt.Errorf(errMsg)
+	}
+
+	var issues []struct {
+		Number      int    `json:"number"`
+		Title       string `json:"title"`
+		HTMLURL     string `json:"html_url"`
+		PullRequest struct {
+			URL string `json:"url"`
+		} `json:"pull_request"`
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&issues); err != nil {
+		logger.Log(fmt.Sprintf("Error decoding GitHub response: %v", err))
+		return nil, err
+	}
+
+	var pullRequests []PullRequest
+	for _, issue := range issues {
+		if issue.PullRequest.URL != "" {
+			pr := PullRequest{
+				Number:     issue.Number,
+				Title:      issue.Title,
+				HTMLURL:    issue.HTMLURL,
+				Repository: issue.Repository.FullName,
+			}
+			pullRequests = append(pullRequests, pr)
+		}
+	}
+
+	logger.Log(fmt.Sprintf("Successfully fetched %d pull requests for review", len(pullRequests)))
+	return pullRequests, nil
 }
 
 func GetPullRequestChanges(cfg *config.Config, repository string, prID int) (string, error) {
-	return "Code changes for PR...", nil
+	logger.Log(fmt.Sprintf("Getting changes for PR #%d in repo %s", prID, repository))
+
+	apiUrl := getFullApiUrl(cfg)
+	url := fmt.Sprintf("%s/repos/%s/pulls/%d/files", apiUrl, repository, prID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error creating request for GitHub PR changes: %v", err))
+		return "", err
+	}
+
+	req.Header.Set("Authorization", "token "+cfg.GitHubConfig.ApiToken)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error connecting to GitHub API (%s): %v", apiUrl, err))
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		errMsg := fmt.Sprintf("GitHub API responded with status code %d: %s", resp.StatusCode, string(body))
+		logger.Log(errMsg)
+		return "", fmt.Errorf(errMsg)
+	}
+
+	var files []struct {
+		Filename string `json:"filename"`
+		Patch    string `json:"patch"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		logger.Log(fmt.Sprintf("Error decoding GitHub PR files response: %v", err))
+		return "", err
+	}
+
+	var combinedChanges string
+	for _, file := range files {
+		fileHeader := fmt.Sprintf("--- a/%s\n+++ b/%s\n", file.Filename, file.Filename)
+		if file.Patch != "" {
+			combinedChanges += fileHeader + file.Patch + "\n\n"
+		}
+	}
+
+	logger.Log(fmt.Sprintf("Successfully fetched changes for PR #%d, total size: %d bytes", prID, len(combinedChanges)))
+	return combinedChanges, nil
 }
 
 func GetRepositoryCode(cfg *config.Config, repository string) (string, error) {
-	return "Entire repository code from GitHub...", nil
+	logger.Log(fmt.Sprintf("Getting entire code for repository %s", repository))
+
+	apiUrl := getFullApiUrl(cfg)
+	url := fmt.Sprintf("%s/repos/%s/zipball", apiUrl, repository)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error creating request for GitHub repo code: %v", err))
+		return "", err
+	}
+
+	req.Header.Set("Authorization", "token "+cfg.GitHubConfig.ApiToken)
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error connecting to GitHub API (%s): %v", apiUrl, err))
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		errMsg := fmt.Sprintf("GitHub API responded with status code %d: %s", resp.StatusCode, string(body))
+		logger.Log(errMsg)
+		return "", fmt.Errorf(errMsg)
+	}
+
+	logger.Log(fmt.Sprintf("Successfully fetched repository code for %s", repository))
+	return fmt.Sprintf("Repository code for %s is too large to include directly. This is a placeholder for the actual downloaded code.", repository), nil
+}
+
+func GetChangesBetweenCommits(cfg *config.Config, repo, oldCommit, newCommit string) (string, error) {
+	logger.Log(fmt.Sprintf("Getting changes between commits %s and %s for repo %s", oldCommit, newCommit, repo))
+	if oldCommit == "" {
+		return GetRepositoryCode(cfg, repo)
+	}
+
+	apiUrl := getFullApiUrl(cfg)
+	url := fmt.Sprintf("%s/repos/%s/compare/%s...%s", apiUrl, repo, oldCommit, newCommit)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error creating request for GitHub compare: %v", err))
+		return "", err
+	}
+	req.Header.Set("Authorization", "token "+cfg.GitHubConfig.ApiToken)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error connecting to GitHub API (%s): %v", apiUrl, err))
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		errMsg := fmt.Sprintf("GitHub API responded with status code %d: %s", resp.StatusCode, string(body))
+		logger.Log(errMsg)
+		return "", fmt.Errorf(errMsg)
+	}
+
+	var compareResult struct {
+		Files []struct {
+			Filename string `json:"filename"`
+			Patch    string `json:"patch"`
+		} `json:"files"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&compareResult); err != nil {
+		logger.Log(fmt.Sprintf("Error decoding GitHub compare response: %v", err))
+		return "", err
+	}
+
+	var combinedDiff string
+	for _, file := range compareResult.Files {
+		fileHeader := fmt.Sprintf("--- a/%s\n+++ b/%s\n", file.Filename, file.Filename)
+		combinedDiff += fileHeader + file.Patch + "\n\n"
+	}
+
+	logger.Log(fmt.Sprintf("Successfully fetched changes between commits, total size: %d bytes", len(combinedDiff)))
+	return combinedDiff, nil
+}
+
+func GetCurrentCommit(cfg *config.Config, repo string, prID int) (string, error) {
+	logger.Log(fmt.Sprintf("Getting current commit for PR #%d in repo %s", prID, repo))
+
+	apiUrl := getFullApiUrl(cfg)
+	url := fmt.Sprintf("%s/repos/%s/pulls/%d/commits", apiUrl, repo, prID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error creating request for GitHub PR commits: %v", err))
+		return "", err
+	}
+
+	req.Header.Set("Authorization", "token "+cfg.GitHubConfig.ApiToken)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error connecting to GitHub API (%s): %v", apiUrl, err))
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		errMsg := fmt.Sprintf("GitHub API responded with status code %d: %s", resp.StatusCode, string(body))
+		logger.Log(errMsg)
+		return "", fmt.Errorf(errMsg)
+	}
+
+	var commits []struct {
+		SHA string `json:"sha"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&commits); err != nil {
+		logger.Log(fmt.Sprintf("Error decoding GitHub commits response: %v", err))
+		return "", err
+	}
+
+	if len(commits) > 0 {
+		logger.Log(fmt.Sprintf("Current commit for PR #%d: %s", prID, commits[len(commits)-1].SHA))
+		return commits[len(commits)-1].SHA, nil
+	}
+
+	return "", fmt.Errorf("no commits found for pull request")
 }
