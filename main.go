@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/michalopenmakers/lazyreview/business"
 	"github.com/michalopenmakers/lazyreview/config"
 	"github.com/michalopenmakers/lazyreview/notifications"
@@ -10,7 +9,6 @@ import (
 
 func main() {
 	cfg := config.LoadConfig()
-	fmt.Println("Starting", cfg.AppName)
 	business.InitializeApplication(cfg)
 	notifications.SendNotification("LazyReview started! Merge requests monitoring initiated.")
 	ui.StartUI()

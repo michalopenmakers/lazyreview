@@ -34,10 +34,6 @@ var (
 	stopMonitoring   chan struct{}
 )
 
-func PerformReview(input string) string {
-	return "Review: " + input + " -> "
-}
-
 func GetCodeReviews() []CodeReview {
 	reviewsJSON := state.GetState()
 	if reviewsJSON == "" {
@@ -208,7 +204,7 @@ func reviewGitLabMR(cfg *config.Config, mr gitlab.MergeRequest) {
 		notifications.SendNotification(fmt.Sprintf("Error during review of GitLab MR #%d: %v", review.MRID, err))
 		return
 	}
-	aiReview, err := openai.CodeReview(cfg, codeChanges)
+	aiReview, err := openai.CodeReview(cfg, codeChanges, isFirstReview)
 	if err != nil {
 		review.Status = "error"
 		review.Review = fmt.Sprintf("AI error: %v", err)
@@ -262,7 +258,7 @@ func reviewGitHubPR(cfg *config.Config, pr github.PullRequest) {
 		notifications.SendNotification(fmt.Sprintf("Error during review of GitHub PR #%d: %v", review.PRID, err))
 		return
 	}
-	aiReview, err := openai.CodeReview(cfg, codeChanges)
+	aiReview, err := openai.CodeReview(cfg, codeChanges, isFirstReview)
 	if err != nil {
 		review.Status = "error"
 		review.Review = fmt.Sprintf("AI error: %v", err)

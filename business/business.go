@@ -5,10 +5,6 @@ import (
 	"github.com/michalopenmakers/lazyreview/review"
 )
 
-func Process() string {
-	return "Business logic processing..."
-}
-
 func InitializeApplication(cfg *config.Config) {
 	review.StartMonitoring(cfg)
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/michalopenmakers/lazyreview/config"
@@ -33,65 +32,105 @@ type CompletionResponse struct {
 	} `json:"choices"`
 }
 
-func Query(cfg *config.Config, prompt string) string {
-	return "Response for: " + prompt
-}
-
-func CodeReview(cfg *config.Config, codeChanges string) (string, error) {
+func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (string, error) {
 	url := "https://api.openai.com/v1/chat/completions"
-	isFullRepo := strings.Contains(codeChanges, "Entire project code")
 	var promptText string
-	if isFullRepo {
-		promptText = "You are an experienced developer performing a complete code analysis. This is the project's first review, so analyze the project structure, code quality, potential security issues, performance and adherence to best practices. Pay attention to the architecture and overall code organization. Be specific and helpful. Provide solution examples when possible."
+	if isFullReview {
+		promptText = "You are an experienced developer performing a complete code analysis. This is the project's first review, so analyze the project structure, code quality, potential security issues, performance and adherence to best practices. Be specific and helpful. Provide solution examples when possible."
 	} else {
 		promptText = "You are an experienced developer performing a code review. Your task is to find potential bugs, security vulnerabilities, performance issues, and suggest improvements to the code quality. Be specific and helpful. Provide solution examples when possible."
 	}
-	messages := []Message{
-		{
-			Role:    "system",
-			Content: promptText,
-		},
-		{
-			Role:    "user",
-			Content: "Perform a code review for the following changes:\n\n" + codeChanges,
-		},
-	}
-	requestBody, err := json.Marshal(CompletionRequest{
-		Model:       cfg.AIModelConfig.Model,
-		Messages:    messages,
-		MaxTokens:   cfg.AIModelConfig.MaxTokens,
-		Temperature: 0.5,
-	})
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.AIModelConfig.ApiKey)
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			fmt.Println("Error closing response body:", err)
+
+	// Jeśli pełny review i kod długi, dzielimy na segmenty
+	if isFullReview && len(codeChanges) > 1500 {
+		var aggregatedReview string
+		segmentSize := 1500
+		segments := []string{}
+		for i := 0; i < len(codeChanges); i += segmentSize {
+			end := i + segmentSize
+			if end > len(codeChanges) {
+				end = len(codeChanges)
+			}
+			segments = append(segments, codeChanges[i:end])
 		}
-	}(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("API responded with status code: %d, body: %s", resp.StatusCode, string(body))
+		for idx, segment := range segments {
+			segPrompt := fmt.Sprintf("%s\n\nSegment %d of %d", promptText, idx+1, len(segments))
+			messages := []Message{
+				{Role: "system", Content: segPrompt},
+				{Role: "user", Content: "Review the following code segment:\n\n" + segment},
+			}
+			requestBody, err := json.Marshal(CompletionRequest{
+				Model:       cfg.AIModelConfig.Model,
+				Messages:    messages,
+				MaxTokens:   cfg.AIModelConfig.MaxTokens,
+				Temperature: 0.5,
+			})
+			if err != nil {
+				return "", err
+			}
+			req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+			if err != nil {
+				return "", err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+cfg.AIModelConfig.ApiKey)
+			client := &http.Client{Timeout: 60 * time.Second}
+			resp, err := client.Do(req)
+			if err != nil {
+				return "", err
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				return "", fmt.Errorf("API responded with status code: %d, body: %s", resp.StatusCode, string(body))
+			}
+			var response CompletionResponse
+			if err = json.NewDecoder(resp.Body).Decode(&response); err != nil {
+				return "", err
+			}
+			if len(response.Choices) == 0 {
+				return "", fmt.Errorf("no response choices returned for segment %d", idx+1)
+			}
+			aggregatedReview += response.Choices[0].Message.Content + "\n"
+		}
+		return aggregatedReview, nil
+	} else {
+		messages := []Message{
+			{Role: "system", Content: promptText},
+			{Role: "user", Content: "Perform a code review for the following changes:\n\n" + codeChanges},
+		}
+		requestBody, err := json.Marshal(CompletionRequest{
+			Model:       cfg.AIModelConfig.Model,
+			Messages:    messages,
+			MaxTokens:   cfg.AIModelConfig.MaxTokens,
+			Temperature: 0.5,
+		})
+		if err != nil {
+			return "", err
+		}
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+cfg.AIModelConfig.ApiKey)
+		client := &http.Client{Timeout: 60 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return "", fmt.Errorf("API responded with status code: %d, body: %s", resp.StatusCode, string(body))
+		}
+		var response CompletionResponse
+		if err = json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			return "", err
+		}
+		if len(response.Choices) == 0 {
+			return "", fmt.Errorf("no response choices returned")
+		}
+		return response.Choices[0].Message.Content, nil
 	}
-	var response CompletionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", err
-	}
-	if len(response.Choices) == 0 {
-		return "", fmt.Errorf("no response choices returned")
-	}
-	return response.Choices[0].Message.Content, nil
 }
