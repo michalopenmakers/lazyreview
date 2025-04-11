@@ -99,15 +99,11 @@ func monitorMergeRequests(cfg *config.Config) {
 
 			for _, mr := range mergeRequests {
 				projectID := fmt.Sprintf("%d", mr.ProjectID)
-
-				// Check if we already have this review
 				exists := false
 				reviewsMutex.Lock()
 				for i, review := range reviews {
 					if review.Source == "gitlab" && review.ProjectID == projectID && review.MergeReqID == mr.IID {
 						exists = true
-
-						// Check if there's a new commit
 						currentCommit, err := gitlab.GetCurrentCommit(cfg, projectID, mr.IID)
 						if err != nil {
 							logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
@@ -116,36 +112,26 @@ func monitorMergeRequests(cfg *config.Config) {
 
 						if currentCommit != review.LastCommit && !review.IsInProgress {
 							logger.Log(fmt.Sprintf("New commit detected for MR #%d, generating review", mr.IID))
-
-							// Mark as in progress
 							reviews[i].IsInProgress = true
 							reviewsMutex.Unlock()
-
-							// Get changes between the commits
 							changes, err := gitlab.GetChangesBetweenCommits(cfg, projectID, review.LastCommit, currentCommit)
 							if err != nil {
 								logger.Log(fmt.Sprintf("Error getting changes: %v", err))
-
 								markReviewNotInProgress(review.ID)
 								break
 							}
-
-							// Generate review
 							reviewText, err := openai.CodeReview(cfg, changes, false)
 							if err != nil {
 								logger.Log(fmt.Sprintf("Error generating review: %v", err))
-
 								markReviewNotInProgress(review.ID)
 								break
 							}
-
 							reviewsMutex.Lock()
 							reviews[i].LastCommit = currentCommit
 							reviews[i].ReviewText = reviewText
 							reviews[i].ReviewedAt = time.Now()
 							reviews[i].IsInProgress = false
 							reviewsMutex.Unlock()
-
 							logger.Log(fmt.Sprintf("Updated review for MR #%d", mr.IID))
 						} else {
 							reviewsMutex.Unlock()
@@ -155,23 +141,18 @@ func monitorMergeRequests(cfg *config.Config) {
 				}
 
 				if !exists {
-					// Create a new review
 					currentCommit, err := gitlab.GetCurrentCommit(cfg, projectID, mr.IID)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
 						reviewsMutex.Unlock()
 						continue
 					}
-
-					// Get initial code
 					changes, err := gitlab.GetMergeRequestChanges(cfg, projectID, mr.IID)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error getting initial changes: %v", err))
 						reviewsMutex.Unlock()
 						continue
 					}
-
-					// Create a new review entry
 					newReview := CodeReview{
 						ID:           fmt.Sprintf("gitlab-%s-%d", projectID, mr.IID),
 						Title:        mr.Title,
@@ -183,19 +164,14 @@ func monitorMergeRequests(cfg *config.Config) {
 						MergeReqID:   mr.IID,
 						IsInProgress: true,
 					}
-
 					reviews = append(reviews, newReview)
 					reviewsMutex.Unlock()
-
-					// Generate review
 					reviewText, err := openai.CodeReview(cfg, changes, true)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error generating review: %v", err))
-
 						markReviewNotInProgress(newReview.ID)
 						continue
 					}
-
 					reviewsMutex.Lock()
 					for i := range reviews {
 						if reviews[i].ID == newReview.ID {
@@ -206,7 +182,6 @@ func monitorMergeRequests(cfg *config.Config) {
 					}
 					reviewsMutex.Unlock()
 				} else {
-					// If exists was true, the lock was already released in the if block
 					if !exists {
 						reviewsMutex.Unlock()
 					}
@@ -245,14 +220,11 @@ func monitorReviewRequests(cfg *config.Config) {
 			}
 
 			for _, pr := range pullRequests {
-				// Check if we already have this review
 				exists := false
 				reviewsMutex.Lock()
 				for i, review := range reviews {
 					if review.Source == "github" && review.Repository == pr.Repository && review.PullReqID == pr.Number {
 						exists = true
-
-						// Check if there's a new commit
 						currentCommit, err := github.GetCurrentCommit(cfg, pr.Repository, pr.Number)
 						if err != nil {
 							logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
@@ -261,36 +233,26 @@ func monitorReviewRequests(cfg *config.Config) {
 
 						if currentCommit != review.LastCommit && !review.IsInProgress {
 							logger.Log(fmt.Sprintf("New commit detected for PR #%d in %s, generating review", pr.Number, pr.Repository))
-
-							// Mark as in progress
 							reviews[i].IsInProgress = true
 							reviewsMutex.Unlock()
-
-							// Get changes between the commits
 							changes, err := github.GetChangesBetweenCommits(cfg, pr.Repository, review.LastCommit, currentCommit)
 							if err != nil {
 								logger.Log(fmt.Sprintf("Error getting changes: %v", err))
-
 								markReviewNotInProgress(review.ID)
 								break
 							}
-
-							// Generate review
 							reviewText, err := openai.CodeReview(cfg, changes, false)
 							if err != nil {
 								logger.Log(fmt.Sprintf("Error generating review: %v", err))
-
 								markReviewNotInProgress(review.ID)
 								break
 							}
-
 							reviewsMutex.Lock()
 							reviews[i].LastCommit = currentCommit
 							reviews[i].ReviewText = reviewText
 							reviews[i].ReviewedAt = time.Now()
 							reviews[i].IsInProgress = false
 							reviewsMutex.Unlock()
-
 							logger.Log(fmt.Sprintf("Updated review for PR #%d in %s", pr.Number, pr.Repository))
 						} else {
 							reviewsMutex.Unlock()
@@ -300,23 +262,18 @@ func monitorReviewRequests(cfg *config.Config) {
 				}
 
 				if !exists {
-					// Create a new review
 					currentCommit, err := github.GetCurrentCommit(cfg, pr.Repository, pr.Number)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
 						reviewsMutex.Unlock()
 						continue
 					}
-
-					// Get initial code
 					changes, err := github.GetPullRequestChanges(cfg, pr.Repository, pr.Number)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error getting initial changes: %v", err))
 						reviewsMutex.Unlock()
 						continue
 					}
-
-					// Create a new review entry
 					newReview := CodeReview{
 						ID:           fmt.Sprintf("github-%s-%d", pr.Repository, pr.Number),
 						Title:        pr.Title,
@@ -328,19 +285,14 @@ func monitorReviewRequests(cfg *config.Config) {
 						PullReqID:    pr.Number,
 						IsInProgress: true,
 					}
-
 					reviews = append(reviews, newReview)
 					reviewsMutex.Unlock()
-
-					// Generate review
 					reviewText, err := openai.CodeReview(cfg, changes, true)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error generating review: %v", err))
-
 						markReviewNotInProgress(newReview.ID)
 						continue
 					}
-
 					reviewsMutex.Lock()
 					for i := range reviews {
 						if reviews[i].ID == newReview.ID {
@@ -351,7 +303,6 @@ func monitorReviewRequests(cfg *config.Config) {
 					}
 					reviewsMutex.Unlock()
 				} else {
-					// If exists was true, the lock was already released in the if block
 					if !exists {
 						reviewsMutex.Unlock()
 					}
@@ -361,7 +312,6 @@ func monitorReviewRequests(cfg *config.Config) {
 	}
 }
 
-// Dodajemy funkcję pomocniczą do obsługi błędów, aby kod był bardziej spójny
 func markReviewNotInProgress(reviewId string) {
 	reviewsMutex.Lock()
 	defer reviewsMutex.Unlock()

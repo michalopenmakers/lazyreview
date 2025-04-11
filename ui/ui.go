@@ -82,7 +82,8 @@ var updateLogs func()
 func StartUI() {
 	mainApp = app.New()
 	mainWindow = mainApp.NewWindow("LazyReview")
-	mainWindow.Resize(fyne.NewSize(900, 600))
+	mainWindow.Resize(fyne.NewSize(1920, 1080))
+	mainWindow.CenterOnScreen()
 
 	setupSystemTray()
 	currentConfig = config.LoadConfig()

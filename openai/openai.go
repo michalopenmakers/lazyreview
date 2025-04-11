@@ -13,10 +13,10 @@ import (
 )
 
 type CompletionRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	MaxTokens   int       `json:"max_tokens"`
-	Temperature float64   `json:"temperature"`
+	Model               string    `json:"model"`
+	Messages            []Message `json:"messages"`
+	MaxCompletionTokens int       `json:"max_completion_tokens"`
+	Temperature         float64   `json:"temperature"`
 }
 
 type Message struct {
@@ -61,10 +61,10 @@ func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (stri
 			}
 			logger.Log(fmt.Sprintf("Sending API request for segment %d of %d", idx+1, len(segments)))
 			requestBody, err := json.Marshal(CompletionRequest{
-				Model:       cfg.AIModelConfig.Model,
-				Messages:    messages,
-				MaxTokens:   cfg.AIModelConfig.MaxTokens,
-				Temperature: 0.5,
+				Model:               cfg.AIModelConfig.Model,
+				Messages:            messages,
+				MaxCompletionTokens: cfg.AIModelConfig.MaxTokens,
+				Temperature:         0.5,
 			})
 			if err != nil {
 				logger.Log(fmt.Sprintf("Error marshaling request: %v", err))
@@ -111,10 +111,10 @@ func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (stri
 		}
 		logger.Log("Sending API request for full review or changes")
 		requestBody, err := json.Marshal(CompletionRequest{
-			Model:       cfg.AIModelConfig.Model,
-			Messages:    messages,
-			MaxTokens:   cfg.AIModelConfig.MaxTokens,
-			Temperature: 0.5,
+			Model:               cfg.AIModelConfig.Model,
+			Messages:            messages,
+			MaxCompletionTokens: cfg.AIModelConfig.MaxTokens,
+			Temperature:         0.5,
 		})
 		if err != nil {
 			logger.Log(fmt.Sprintf("Error marshaling request: %v", err))
