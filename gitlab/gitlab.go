@@ -12,10 +12,10 @@ import (
 )
 
 type MergeRequest struct {
-	IID       int
-	ProjectID int
-	Title     string
-	WebURL    string
+	IID       int    `json:"iid"`
+	ProjectID int    `json:"project_id"`
+	Title     string `json:"title"`
+	WebURL    string `json:"web_url"`
 }
 
 func GetMergeRequestChanges(cfg *config.Config, projectID string, mrID int) (string, error) {
@@ -47,6 +47,13 @@ func GetMergeRequestChanges(cfg *config.Config, projectID string, mrID int) (str
 		return "", fmt.Errorf(errMsg)
 	}
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error reading API response: %v", err))
+		return "", err
+	}
+	logger.Log("API response: " + string(bodyBytes))
+
 	var response struct {
 		Changes []struct {
 			OldPath     string `json:"old_path"`
@@ -56,7 +63,7 @@ func GetMergeRequestChanges(cfg *config.Config, projectID string, mrID int) (str
 		} `json:"changes"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	if err := json.Unmarshal(bodyBytes, &response); err != nil {
 		logger.Log(fmt.Sprintf("Error decoding GitLab response: %v", err))
 		return "", err
 	}
@@ -105,8 +112,15 @@ func GetMergeRequestsToReview(cfg *config.Config) ([]MergeRequest, error) {
 		return nil, fmt.Errorf(errMsg)
 	}
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error reading API response: %v", err))
+		return nil, err
+	}
+	logger.Log("API response: " + string(bodyBytes))
+
 	var mergeRequests []MergeRequest
-	if err := json.NewDecoder(resp.Body).Decode(&mergeRequests); err != nil {
+	if err := json.Unmarshal(bodyBytes, &mergeRequests); err != nil {
 		logger.Log(fmt.Sprintf("Error decoding GitLab response: %v", err))
 		return nil, err
 	}
@@ -148,6 +162,13 @@ func GetChangesBetweenCommits(cfg *config.Config, projectID, oldCommit, newCommi
 		return "", fmt.Errorf(errMsg)
 	}
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error reading API response: %v", err))
+		return "", err
+	}
+	logger.Log("API response: " + string(bodyBytes))
+
 	var compareResult struct {
 		Diffs []struct {
 			Diff        string `json:"diff"`
@@ -157,7 +178,7 @@ func GetChangesBetweenCommits(cfg *config.Config, projectID, oldCommit, newCommi
 		} `json:"diffs"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&compareResult); err != nil {
+	if err := json.Unmarshal(bodyBytes, &compareResult); err != nil {
 		logger.Log(fmt.Sprintf("Error decoding GitLab compare response: %v", err))
 		return "", err
 	}
@@ -201,11 +222,18 @@ func GetCurrentCommit(cfg *config.Config, projectID string, mrID int) (string, e
 		return "", fmt.Errorf(errMsg)
 	}
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error reading API response: %v", err))
+		return "", err
+	}
+	logger.Log("API response: " + string(bodyBytes))
+
 	var commits []struct {
 		ID string `json:"id"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&commits); err != nil {
+	if err := json.Unmarshal(bodyBytes, &commits); err != nil {
 		logger.Log(fmt.Sprintf("Error decoding GitLab commits response: %v", err))
 		return "", err
 	}

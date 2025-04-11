@@ -52,6 +52,13 @@ func GetPullRequestsToReview(cfg *config.Config) ([]PullRequest, error) {
 		return nil, fmt.Errorf(errMsg)
 	}
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error reading API response: %v", err))
+		return nil, err
+	}
+	logger.Log("API response: " + string(bodyBytes))
+
 	var issues []struct {
 		Number      int    `json:"number"`
 		Title       string `json:"title"`
@@ -64,7 +71,7 @@ func GetPullRequestsToReview(cfg *config.Config) ([]PullRequest, error) {
 		} `json:"repository"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&issues); err != nil {
+	if err := json.Unmarshal(bodyBytes, &issues); err != nil {
 		logger.Log(fmt.Sprintf("Error decoding GitHub response: %v", err))
 		return nil, err
 	}
@@ -116,12 +123,19 @@ func GetPullRequestChanges(cfg *config.Config, repository string, prID int) (str
 		return "", fmt.Errorf(errMsg)
 	}
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error reading API response: %v", err))
+		return "", err
+	}
+	logger.Log("API response: " + string(bodyBytes))
+
 	var files []struct {
 		Filename string `json:"filename"`
 		Patch    string `json:"patch"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+	if err := json.Unmarshal(bodyBytes, &files); err != nil {
 		logger.Log(fmt.Sprintf("Error decoding GitHub PR files response: %v", err))
 		return "", err
 	}
@@ -203,6 +217,13 @@ func GetChangesBetweenCommits(cfg *config.Config, repo, oldCommit, newCommit str
 		return "", fmt.Errorf(errMsg)
 	}
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error reading API response: %v", err))
+		return "", err
+	}
+	logger.Log("API response: " + string(bodyBytes))
+
 	var compareResult struct {
 		Files []struct {
 			Filename string `json:"filename"`
@@ -210,7 +231,7 @@ func GetChangesBetweenCommits(cfg *config.Config, repo, oldCommit, newCommit str
 		} `json:"files"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&compareResult); err != nil {
+	if err := json.Unmarshal(bodyBytes, &compareResult); err != nil {
 		logger.Log(fmt.Sprintf("Error decoding GitHub compare response: %v", err))
 		return "", err
 	}
@@ -255,11 +276,18 @@ func GetCurrentCommit(cfg *config.Config, repo string, prID int) (string, error)
 		return "", fmt.Errorf(errMsg)
 	}
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error reading API response: %v", err))
+		return "", err
+	}
+	logger.Log("API response: " + string(bodyBytes))
+
 	var commits []struct {
 		SHA string `json:"sha"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&commits); err != nil {
+	if err := json.Unmarshal(bodyBytes, &commits); err != nil {
 		logger.Log(fmt.Sprintf("Error decoding GitHub commits response: %v", err))
 		return "", err
 	}
