@@ -83,7 +83,12 @@ func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (stri
 				logger.Log(fmt.Sprintf("HTTP request error: %v", err))
 				return "", err
 			}
-			defer resp.Body.Close()
+			defer func(Body io.ReadCloser) {
+				err := Body.Close()
+				if err != nil {
+
+				}
+			}(resp.Body)
 			if resp.StatusCode != http.StatusOK {
 				body, _ := io.ReadAll(resp.Body)
 				errMsg := fmt.Sprintf("API responded with status code: %d, body: %s", resp.StatusCode, string(body))
@@ -133,7 +138,12 @@ func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (stri
 			logger.Log(fmt.Sprintf("HTTP request error: %v", err))
 			return "", err
 		}
-		defer resp.Body.Close()
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+
+			}
+		}(resp.Body)
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			errMsg := fmt.Sprintf("API responded with status code: %d, body: %s", resp.StatusCode, string(body))
