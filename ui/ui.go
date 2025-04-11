@@ -1,7 +1,9 @@
 package ui
 
 import (
+	_ "embed"
 	"fmt"
+	"image/color"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +22,9 @@ import (
 	"github.com/michalopenmakers/lazyreview/logger"
 	"github.com/michalopenmakers/lazyreview/notifications"
 )
+
+//go:embed icon.png
+var iconPng []byte
 
 var currentConfig *config.Config
 var mainWindow fyne.Window
@@ -100,24 +105,31 @@ func StartUI() {
 
 	statusInfo = widget.NewLabel("")
 
-	logsDisplay := widget.NewMultiLineEntry()
-	logsDisplay.TextStyle = fyne.TextStyle{Monospace: true}
-	logsDisplay.Disable()
-	logsDisplay.Wrapping = fyne.TextWrapBreak
+	logsDisplay := widget.NewRichText()
 
 	copyLogsButton := widget.NewButtonWithIcon("Copy logs", theme.ContentCopyIcon(), func() {
-		mainWindow.Clipboard().SetContent(logsDisplay.Text)
-		setStatus("Logs copied to clipboard.")
-	})
-
-	updateLogs = func() {
 		logs := logger.GetLogs()
 		formattedLogs := make([]string, len(logs))
 		for i, log := range logs {
 			formattedLogs[i] = " " + log
 		}
-		logText := strings.Join(formattedLogs, "\n")
-		logsDisplay.SetText(logText)
+		mainWindow.Clipboard().SetContent(strings.Join(formattedLogs, "\n"))
+		setStatus("Logs copied to clipboard.")
+	})
+
+	updateLogs = func() {
+		logs := logger.GetLogs()
+		baseColor := theme.Color("text")
+		lighterColor := lightenColor(baseColor, 0.5)
+		hexColor := colorToHex(lighterColor)
+
+		var markupLogs strings.Builder
+		for _, log := range logs {
+			markupLogs.WriteString(fmt.Sprintf("<span style='font-family:monospace; color:%s;'> %s</span>\n\n", hexColor, log))
+		}
+		newRich := widget.NewRichTextFromMarkdown(markupLogs.String())
+		logsDisplay.Segments = newRich.Segments
+		logsDisplay.Refresh()
 	}
 
 	logsScrollContainer := container.NewScroll(logsDisplay)
@@ -163,23 +175,14 @@ func StartUI() {
 func buildToolbar(refreshAction func(), settingsAction func()) *widget.Toolbar {
 	title := widget.NewLabel("LazyReview - AI Code Review")
 	title.TextStyle = fyne.TextStyle{Bold: true}
-
 	return widget.NewToolbar(
-		widget.NewToolbarAction(theme.ViewRefreshIcon(), func() {
-			refreshAction()
-		}),
+		widget.NewToolbarAction(theme.ViewRefreshIcon(), func() { refreshAction() }),
 		widget.NewToolbarSeparator(),
-		widget.NewToolbarAction(theme.SettingsIcon(), func() {
-			settingsAction()
-		}),
+		widget.NewToolbarAction(theme.SettingsIcon(), func() { settingsAction() }),
 		widget.NewToolbarSpacer(),
 		widget.NewToolbarAction(theme.InfoIcon(), func() {
 			dialog.NewInformation("About", "LazyReview - AI Code Review\nVersion: 1.0\n© 2023 - 2025 MichalOpenmakers", mainWindow).Show()
 		}),
-		widget.NewToolbarSeparator(),
-		widget.NewToolbarAction(nil, nil),
-		widget.NewToolbarSeparator(),
-		widget.NewToolbarAction(theme.FyneLogo(), func() {}),
 	)
 }
 
@@ -199,13 +202,11 @@ func setupSystemTray() {
 		showItem := fyne.NewMenuItem("Show", showWindow)
 		hideItem := fyne.NewMenuItem("Hide", hideWindow)
 		settingsItem := fyne.NewMenuItem("Settings", showSettingsDialog)
-		quitItem := fyne.NewMenuItem("Quit", func() {
-			mainApp.Quit()
-		})
-
+		quitItem := fyne.NewMenuItem("Quit", func() { mainApp.Quit() })
 		menu := fyne.NewMenu("LazyReview", showItem, hideItem, fyne.NewMenuItemSeparator(), settingsItem, fyne.NewMenuItemSeparator(), quitItem)
 		desk.SetSystemTrayMenu(menu)
-		desk.SetSystemTrayIcon(theme.FyneLogo())
+		res := fyne.NewStaticResource("icon.png", iconPng)
+		desk.SetSystemTrayIcon(res)
 	}
 }
 
@@ -325,4 +326,20 @@ func showSettingsDialog() {
 		saveButton,
 	)
 	dialog.ShowCustom("Settings", "Close", content, mainWindow)
+}
+
+func lightenColor(c color.Color, factor float64) color.Color {
+	r, g, b, a := c.RGBA() // wartości 16-bitowe
+	r8 := uint8(r >> 8)
+	g8 := uint8(g >> 8)
+	b8 := uint8(b >> 8)
+	newR := uint8(float64(r8) + (255-float64(r8))*factor)
+	newG := uint8(float64(g8) + (255-float64(g8))*factor)
+	newB := uint8(float64(b8) + (255-float64(b8))*factor)
+	return &color.NRGBA{R: newR, G: newG, B: newB, A: uint8(a >> 8)}
+}
+
+func colorToHex(c color.Color) string {
+	r, g, b, _ := c.RGBA()
+	return fmt.Sprintf("#%02x%02x%02x", uint8(r>>8), uint8(g>>8), uint8(b>>8))
 }

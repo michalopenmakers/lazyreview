@@ -16,4 +16,4 @@ clean:
 	rm -rf $(APP_NAME).app
 
 macapp:
-	fyne package -os darwin -name $(APP_NAME) -icon icon.png
+	fyne package -os darwin -name $(APP_NAME) -icon ui/icon.png
