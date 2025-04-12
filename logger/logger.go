@@ -1,27 +1,65 @@
 package logger
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"sync"
-	"time"
 )
 
-var (
-	mu   sync.Mutex
-	logs []string
-)
+type memoryHandler struct {
+	mu      sync.Mutex
+	logs    []string
+	handler slog.Handler
+}
+
+func (m *memoryHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return m.handler.Enabled(ctx, level)
+}
+
+func (m *memoryHandler) Handle(ctx context.Context, r slog.Record) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	formatted := fmt.Sprintf("[%s] %s", r.Time.Format("2006-01-02 15:04:05"), r.Message)
+	m.logs = append(m.logs, formatted)
+	return m.handler.Handle(ctx, r)
+}
+
+func (m *memoryHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &memoryHandler{
+		handler: m.handler.WithAttrs(attrs),
+		logs:    m.logs,
+	}
+}
+
+func (m *memoryHandler) WithGroup(name string) slog.Handler {
+	return &memoryHandler{
+		handler: m.handler.WithGroup(name),
+		logs:    m.logs,
+	}
+}
+
+var memHandler *memoryHandler
+var Logger *slog.Logger
+
+func init() {
+	memHandler = &memoryHandler{
+		handler: slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			AddSource: false,
+		}),
+	}
+	Logger = slog.New(memHandler)
+}
 
 func Log(msg string) {
-	mu.Lock()
-	defer mu.Unlock()
-	logLine := fmt.Sprintf("[%s] %s", time.Now().Format("2006-01-02 15:04:05"), msg)
-	logs = append(logs, logLine)
+	Logger.Info(msg)
 }
 
 func GetLogs() []string {
-	mu.Lock()
-	defer mu.Unlock()
-	out := make([]string, len(logs))
-	copy(out, logs)
-	return out
+	memHandler.mu.Lock()
+	defer memHandler.mu.Unlock()
+	copied := make([]string, len(memHandler.logs))
+	copy(copied, memHandler.logs)
+	return copied
 }
