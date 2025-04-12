@@ -27,14 +27,20 @@ import (
 //go:embed icon.png
 var iconPng []byte
 
-var currentConfig *config.Config
-var mainWindow fyne.Window
-var mainApp fyne.App
-var statusInfo *widget.Label
-var currentReviewIndex = -1
+// Dodajemy globalne zmienne do przechowywania scroll containera oraz flagi edycji
+var (
+	currentConfig      *config.Config
+	mainWindow         fyne.Window
+	mainApp            fyne.App
+	statusInfo         *widget.Label
+	currentReviewIndex = -1
 
-var selectedReview *review.CodeReview
-var acceptButton *widget.Button
+	selectedReview *review.CodeReview
+	acceptButton   *widget.Button
+
+	reviewsListScroll *container.Scroll         // nowy globalny wskaźnik do scroll containera
+	isEditing         bool              = false // globalna flaga edycji
+)
 
 type whiteDisabledTextTheme struct {
 	fyne.Theme
@@ -48,6 +54,9 @@ func (w whiteDisabledTextTheme) Color(name fyne.ThemeColorName, variant fyne.The
 }
 
 func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry) {
+	// Zapamiętaj aktualny offset scrollowania
+	offset := reviewsListScroll.Offset
+
 	reviews := business.GetReviews()
 	reviewsList.RemoveAll()
 
@@ -62,15 +71,17 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 		currentReviewIndex = -1
 		selectedReview = nil
 	} else {
-		for i, r := range reviews {
-			currentReview := r // lokalna kopia
+		// Zmiana: iterujemy po indeksach, aby uzyskać wskaźnik do oryginalnego elementu
+		for i := range reviews {
+			currentReview := &reviews[i]
 			btnSelect := widget.NewButton(currentReview.Title, func() {
-				selectedReview = &currentReview
+				// Używamy wskaźnika do oryginalnej recenzji
+				selectedReview = currentReview
 				if reviewDetails != nil {
 					reviewDetails.SetText(currentReview.ReviewText)
 				}
 				if currentReview.ReviewText != "" {
-					if selectedReview.Accepted {
+					if currentReview.Accepted {
 						acceptButton.SetText("Accepted")
 						acceptButton.Disable()
 					} else {
@@ -86,14 +97,15 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 			row := container.NewHBox(btnSelect)
 			reviewsList.Add(row)
 
+			// Ustawienie pierwszej recenzji, jeśli jeszcze nie ustawiono
 			if i == 0 && (currentReviewIndex < 0 || currentReviewIndex >= len(reviews)) {
 				currentReviewIndex = 0
-				selectedReview = &currentReview
+				selectedReview = currentReview
 				if reviewDetails != nil {
 					reviewDetails.SetText(currentReview.ReviewText)
 				}
 				if currentReview.ReviewText != "" {
-					if selectedReview.Accepted {
+					if currentReview.Accepted {
 						acceptButton.SetText("Accepted")
 						acceptButton.Disable()
 					} else {
@@ -109,14 +121,17 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 	}
 
 	reviewsList.Refresh()
+	// Przywracamy offset scrollowania
+	reviewsListScroll.Offset = offset
+	reviewsListScroll.Refresh()
 
-	// Dodajemy automatyczną aktualizację szczegółów wybranej recenzji
-	if selectedReview != nil && reviewDetails != nil {
-		for _, r := range reviews {
-			if r.ID == selectedReview.ID {
-				reviewDetails.SetText(r.ReviewText)
-				if r.ReviewText != "" {
-					if r.Accepted {
+	// Dodajemy automatyczną aktualizację szczegółów wybranej recenzji tylko gdy nie edytujemy
+	if selectedReview != nil && reviewDetails != nil && !isEditing {
+		for i := range reviews {
+			if reviews[i].ID == selectedReview.ID {
+				reviewDetails.SetText(reviews[i].ReviewText)
+				if reviews[i].ReviewText != "" {
+					if reviews[i].Accepted {
 						acceptButton.SetText("Accepted")
 						acceptButton.Disable()
 					} else {
@@ -156,6 +171,9 @@ func StartUI() {
 
 	reviewsListContainer := container.NewVBox()
 	scrollContainer := container.NewScroll(reviewsListContainer)
+	// Przypisanie scrollContainer do globalnej zmiennej, aby zachować offset przy odświeżaniu
+	reviewsListScroll = scrollContainer
+
 	split := container.NewHSplit(
 		scrollContainer,
 		buildDetailsSection(reviewDetails),
@@ -264,7 +282,7 @@ func buildDetailsSection(reviewDetails *widget.Entry) fyne.CanvasObject {
 	acceptButton.Disable()
 	acceptButton.Hide()
 
-	var isEditing bool = false
+	// Aktualizacja przycisku Edit/Save, aby zapisywał zmodyfikowany tekst recenzji
 	var editButton *widget.Button
 	editButton = widget.NewButton("Edit", func() {
 		if !isEditing {
@@ -272,6 +290,10 @@ func buildDetailsSection(reviewDetails *widget.Entry) fyne.CanvasObject {
 			editButton.SetText("Save")
 			isEditing = true
 		} else {
+			// Aktualizacja recenzji o zmieniony tekst przed zapisaniem
+			if selectedReview != nil {
+				selectedReview.ReviewText = reviewDetails.Text
+			}
 			reviewDetails.Disable()
 			editButton.SetText("Edit")
 			isEditing = false
@@ -328,6 +350,8 @@ func hideWindow() {
 }
 
 func showSettingsDialog() {
+	var settingsDialog dialog.Dialog // dodana zmienna dla dialogu
+
 	gitlabEnabledCheck := widget.NewCheck("Enable GitLab", func(enabled bool) {
 		currentConfig.GitLabConfig.Enabled = enabled
 	})
@@ -424,11 +448,14 @@ func showSettingsDialog() {
 		business.RestartMonitoring(currentConfig)
 		dialog.NewInformation("Settings saved", "Settings saved", mainWindow).Show()
 		setStatus("Settings saved.")
+		settingsDialog.Hide() // zamykamy okno ustawień
 	})
 
 	content := container.NewVBox(
 		form,
 		saveButton,
 	)
-	dialog.ShowCustom("Settings", "Close", content, mainWindow)
+
+	settingsDialog = dialog.NewCustom("Settings", "Close", content, mainWindow)
+	settingsDialog.Show()
 }
