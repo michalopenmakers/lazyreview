@@ -81,46 +81,51 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 	} else {
 		for i := range reviews {
 			currentReview := &reviews[i]
-			btnSelect := widget.NewButton(currentReview.Title, func() {
-				// Używamy wskaźnika do oryginalnej recenzji
-				selectedReview = currentReview
-				if reviewDetails != nil {
-					reviewDetails.SetText(currentReview.ReviewText)
-				}
-				if currentReview.ReviewText != "" {
-					if currentReview.Accepted {
-						acceptButton.SetText("Accepted")
-						acceptButton.Disable()
-					} else {
-						acceptButton.SetText("Accept")
-						acceptButton.Enable()
+			if currentReview.Accepted {
+				richText := widget.NewRichTextFromMarkdown(fmt.Sprintf("<span color='#808080'>%s</span>", currentReview.Title))
+				row := container.NewHBox(richText)
+				reviewsList.Add(row)
+			} else {
+				btnSelect := widget.NewButton(currentReview.Title, func() {
+					selectedReview = currentReview
+					if reviewDetails != nil {
+						reviewDetails.SetText(currentReview.ReviewText)
 					}
-					acceptButton.Show()
-				} else {
-					acceptButton.Hide()
-				}
-				setStatus(fmt.Sprintf("Showing review: %s", currentReview.Title))
-			})
-			row := container.NewHBox(btnSelect)
-			reviewsList.Add(row)
+					if currentReview.ReviewText != "" {
+						if currentReview.Accepted {
+							acceptButton.SetText("Accepted")
+							acceptButton.Disable()
+						} else {
+							acceptButton.SetText("Accept")
+							acceptButton.Enable()
+						}
+						acceptButton.Show()
+					} else {
+						acceptButton.Hide()
+					}
+					setStatus(fmt.Sprintf("Showing review: %s", currentReview.Title))
+				})
+				row := container.NewHBox(btnSelect)
+				reviewsList.Add(row)
 
-			if i == 0 && (currentReviewIndex < 0 || currentReviewIndex >= len(reviews)) {
-				currentReviewIndex = 0
-				selectedReview = currentReview
-				if reviewDetails != nil {
-					reviewDetails.SetText(currentReview.ReviewText)
-				}
-				if currentReview.ReviewText != "" {
-					if currentReview.Accepted {
-						acceptButton.SetText("Accepted")
-						acceptButton.Disable()
-					} else {
-						acceptButton.SetText("Accept")
-						acceptButton.Enable()
+				if i == 0 && (currentReviewIndex < 0 || currentReviewIndex >= len(reviews)) {
+					currentReviewIndex = 0
+					selectedReview = currentReview
+					if reviewDetails != nil {
+						reviewDetails.SetText(currentReview.ReviewText)
 					}
-					acceptButton.Show()
-				} else {
-					acceptButton.Hide()
+					if currentReview.ReviewText != "" {
+						if currentReview.Accepted {
+							acceptButton.SetText("Accepted")
+							acceptButton.Disable()
+						} else {
+							acceptButton.SetText("Accept")
+							acceptButton.Enable()
+						}
+						acceptButton.Show()
+					} else {
+						acceptButton.Hide()
+					}
 				}
 			}
 		}
@@ -287,6 +292,10 @@ func buildDetailsSection(reviewDetails *widget.Entry) fyne.CanvasObject {
 
 	var editButton *widget.Button
 	editButton = widget.NewButton("Edit", func() {
+		// Zablokowanie edycji, jeżeli recenzja została zaakceptowana.
+		if selectedReview != nil && selectedReview.Accepted {
+			return
+		}
 		if !isEditing {
 			reviewDetails.Enable()
 			editButton.SetText("Save")
