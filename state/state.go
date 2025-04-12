@@ -71,6 +71,24 @@ func SaveState() error {
 	return os.WriteFile(stateFilePath, data, 0644)
 }
 
+func IsFirstGitLabReview(projectID string) bool {
+	initialize()
+	stateMutex.RLock()
+	defer stateMutex.RUnlock()
+
+	_, exists := appState.GitLabProjects[projectID]
+	return !exists
+}
+
+func IsFirstGitHubReview(repoName string) bool {
+	initialize()
+	stateMutex.RLock()
+	defer stateMutex.RUnlock()
+
+	_, exists := appState.GitHubRepos[repoName]
+	return !exists
+}
+
 func UpdateGitLabProjectState(projectID, commitID string, timestamp int64) {
 	initialize()
 	stateMutex.Lock()
