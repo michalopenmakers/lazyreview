@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type ProjectState struct {
 	LastReviewedCommit string
 	LastReviewTime     int64
 	ReviewCount        int
+	Commented          bool
 }
 
 type AppState struct {
@@ -31,62 +33,91 @@ func initialize() {
 	if initialized {
 		return
 	}
+
 	stateMutex.Lock()
 	defer stateMutex.Unlock()
 
-	appState = &AppState{
-		GitLabProjects: make(map[string]*ProjectState),
-		GitHubRepos:    make(map[string]*ProjectState),
-	}
-
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
+		logger.Log(fmt.Sprintf("Error getting user home directory: %v", err))
 		homeDir = "."
 	}
 	stateFilePath = filepath.Join(homeDir, ".lazyreview_state.json")
+	logger.Log(fmt.Sprintf("Using state file: %s", stateFilePath))
 
 	if _, err := os.Stat(stateFilePath); err == nil {
-		file, err := os.ReadFile(stateFilePath)
-		if err == nil {
-			err = json.Unmarshal(file, appState)
-			if err != nil {
-				fmt.Printf("Error unmarshaling state: %v, creating new state\n", err)
-			}
+		// Plik istnieje, wczytaj stan
+		if err := LoadState(); err != nil {
+			logger.Log(fmt.Sprintf("Error loading state, creating new: %v", err))
+			createNewState()
 		}
+	} else if os.IsNotExist(err) {
+		// Plik nie istnieje, utwórz nowy stan
+		logger.Log("State file doesn't exist, creating new")
+		createNewState()
+	} else {
+		// Inny błąd
+		logger.Log(fmt.Sprintf("Error checking state file: %v", err))
+		createNewState()
 	}
 
 	initialized = true
 }
 
-func SaveState() error {
-	initialize()
-	stateMutex.RLock()
-	defer stateMutex.RUnlock()
+func createNewState() {
+	appState = &AppState{
+		GitLabProjects: make(map[string]*ProjectState),
+		GitHubRepos:    make(map[string]*ProjectState),
+	}
+	if err := SaveState(); err != nil {
+		logger.Log(fmt.Sprintf("Error saving initial state: %v", err))
+	}
+}
 
-	data, err := json.MarshalIndent(appState, "", "  ")
-	if err != nil {
-		return err
+func SaveState() error {
+	if appState == nil {
+		return fmt.Errorf("cannot save nil state")
 	}
 
-	return os.WriteFile(stateFilePath, data, 0644)
+	tmpFile := stateFilePath + ".tmp"
+	data, err := json.MarshalIndent(appState, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error marshaling state: %w", err)
+	}
+
+	err = os.WriteFile(tmpFile, data, 0600)
+	if err != nil {
+		return fmt.Errorf("error writing to temporary state file: %w", err)
+	}
+
+	err = os.Rename(tmpFile, stateFilePath)
+	if err != nil {
+		return fmt.Errorf("error renaming temporary state file: %w", err)
+	}
+
+	logger.Log("State saved successfully")
+	return nil
 }
 
-func IsFirstGitLabReview(projectID string) bool {
-	initialize()
-	stateMutex.RLock()
-	defer stateMutex.RUnlock()
+func LoadState() error {
+	data, err := os.ReadFile(stateFilePath)
+	if err != nil {
+		return fmt.Errorf("error reading state file: %w", err)
+	}
 
-	_, exists := appState.GitLabProjects[projectID]
-	return !exists
+	var state AppState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return fmt.Errorf("error unmarshaling state: %w", err)
+	}
+
+	appState = &state
+	logger.Log("State loaded successfully")
+	return nil
 }
 
-func IsFirstGitHubReview(repoName string) bool {
+func Init() {
 	initialize()
-	stateMutex.RLock()
-	defer stateMutex.RUnlock()
-
-	_, exists := appState.GitHubRepos[repoName]
-	return !exists
+	logger.Log("State module initialized")
 }
 
 func UpdateGitLabProjectState(projectID, commitID string, timestamp int64) {
@@ -98,11 +129,13 @@ func UpdateGitLabProjectState(projectID, commitID string, timestamp int64) {
 		project.LastReviewedCommit = commitID
 		project.LastReviewTime = timestamp
 		project.ReviewCount++
+		project.Commented = false // resetujemy flagę przy aktualizacji commit
 	} else {
 		appState.GitLabProjects[projectID] = &ProjectState{
 			LastReviewedCommit: commitID,
 			LastReviewTime:     timestamp,
 			ReviewCount:        1,
+			Commented:          false,
 		}
 	}
 	err := SaveState()
@@ -110,26 +143,63 @@ func UpdateGitLabProjectState(projectID, commitID string, timestamp int64) {
 		logger.Log("Error saving state: " + err.Error())
 		return
 	}
+	logger.Log(fmt.Sprintf("GitLab project state updated for %s, commit %s", projectID, commitID))
 }
 
-func UpdateGitHubRepoState(repoName, commitID string, timestamp int64) {
+func UpdateGitHubRepoState(repo, commitID string, timestamp int64) {
 	initialize()
 	stateMutex.Lock()
 	defer stateMutex.Unlock()
 
-	if repo, exists := appState.GitHubRepos[repoName]; exists {
-		repo.LastReviewedCommit = commitID
-		repo.LastReviewTime = timestamp
-		repo.ReviewCount++
+	if project, exists := appState.GitHubRepos[repo]; exists {
+		project.LastReviewedCommit = commitID
+		project.LastReviewTime = timestamp
+		project.ReviewCount++
+		project.Commented = false
 	} else {
-		appState.GitHubRepos[repoName] = &ProjectState{
+		appState.GitHubRepos[repo] = &ProjectState{
 			LastReviewedCommit: commitID,
 			LastReviewTime:     timestamp,
 			ReviewCount:        1,
+			Commented:          false,
 		}
 	}
 	err := SaveState()
 	if err != nil {
+		logger.Log("Error saving state: " + err.Error())
 		return
+	}
+	logger.Log(fmt.Sprintf("GitHub repo state updated for %s, commit %s", repo, commitID))
+}
+
+func MarkGitLabProjectCommented(projectID string) {
+	initialize()
+	stateMutex.Lock()
+	defer stateMutex.Unlock()
+
+	if appState.GitLabProjects == nil {
+		logger.Log("Warning: GitLabProjects map is nil, initializing")
+		appState.GitLabProjects = make(map[string]*ProjectState)
+	}
+
+	if project, exists := appState.GitLabProjects[projectID]; exists {
+		project.Commented = true
+		logger.Log(fmt.Sprintf("Setting commented flag for project %s", projectID))
+	} else {
+		logger.Log(fmt.Sprintf("Creating new state entry for project %s", projectID))
+		appState.GitLabProjects[projectID] = &ProjectState{
+			LastReviewedCommit: "unknown",
+			LastReviewTime:     time.Now().Unix(),
+			ReviewCount:        1,
+			Commented:          true,
+		}
+	}
+
+	logger.Log("Calling SaveState after marking project as commented")
+	err := SaveState()
+	if err != nil {
+		logger.Log(fmt.Sprintf("ERROR marking GitLab project as commented: %v", err))
+	} else {
+		logger.Log(fmt.Sprintf("CONFIRMATION: GitLab project %s marked as commented", projectID))
 	}
 }

@@ -30,6 +30,7 @@ type CodeReview struct {
 	ReviewText   string
 	IsInProgress bool
 	Accepted     bool
+	Commented    bool
 }
 
 func monitorMergeRequests(cfg *config.Config) {
@@ -59,6 +60,29 @@ func monitorMergeRequests(cfg *config.Config) {
 			}
 			for _, mr := range mergeRequests {
 				projectID := fmt.Sprintf("%d", mr.ProjectID)
+
+				// Od razu sprawdzamy, czy merge request został skomentowany
+				hasMyComment, err := gitlab.HasMyComment(cfg, projectID, mr.IID)
+				if err != nil {
+					logger.Log(fmt.Sprintf("Error checking if MR #%d has my comment: %v", mr.IID, err))
+				}
+
+				// Domyślnie: brak odpowiedzi
+				hasReply := false
+
+				// Jeśli mamy już komentarz, sprawdzamy czy pojawiła się odpowiedź
+				if hasMyComment {
+					hasReply, err = gitlab.HasReplyOnMyComment(cfg, projectID, mr.IID)
+					if err != nil {
+						logger.Log(fmt.Sprintf("Error checking for replies on MR #%d: %v", mr.IID, err))
+					}
+					if !hasReply {
+						logger.Log(fmt.Sprintf("MR #%d already has my comment with no reply, skipping", mr.IID))
+						continue // Przejdź do następnego MR, bez przetwarzania tego
+					}
+					logger.Log(fmt.Sprintf("MR #%d has a reply to my comment, will process", mr.IID))
+				}
+
 				exists := false
 				reviewsMutex.Lock()
 				for i, review := range reviews {
@@ -69,7 +93,14 @@ func monitorMergeRequests(cfg *config.Config) {
 							logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
 							break
 						}
-						if currentCommit != review.LastCommit && !review.IsInProgress {
+
+						// Jeśli commit się nie zmienił i mamy komentarz bez odpowiedzi, pomijamy
+						if currentCommit == review.LastCommit && hasMyComment && !hasReply {
+							logger.Log(fmt.Sprintf("MR #%d: same commit and already commented with no reply, skipping", mr.IID))
+							reviewsMutex.Unlock()
+							goto nextMR
+						} else if currentCommit != review.LastCommit && !review.IsInProgress {
+							// Nowy commit, przetwarzamy nawet jeśli już skomentowaliśmy
 							logger.Log(fmt.Sprintf("New commit detected for MR #%d, generating review", mr.IID))
 							reviews[i].IsInProgress = true
 							reviewsMutex.Unlock()
@@ -77,19 +108,20 @@ func monitorMergeRequests(cfg *config.Config) {
 							if err != nil {
 								logger.Log(fmt.Sprintf("Error getting changes: %v", err))
 								markReviewNotInProgress(review.ID)
-								break
+								goto nextMR
 							}
 							reviewText, err := openai.CodeReview(cfg, changes, false)
 							if err != nil {
 								logger.Log(fmt.Sprintf("Error generating review: %v", err))
 								markReviewNotInProgress(review.ID)
-								break
+								goto nextMR
 							}
 							reviewsMutex.Lock()
 							reviews[i].LastCommit = currentCommit
 							reviews[i].ReviewText = reviewText
 							reviews[i].ReviewedAt = time.Now()
 							reviews[i].IsInProgress = false
+							reviews[i].Commented = false
 							reviewsMutex.Unlock()
 							state.UpdateGitLabProjectState(projectID, currentCommit, time.Now().Unix())
 							logger.Log(fmt.Sprintf("Updated review for MR #%d", mr.IID))
@@ -104,13 +136,13 @@ func monitorMergeRequests(cfg *config.Config) {
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
 						reviewsMutex.Unlock()
-						continue
+						goto nextMR
 					}
 					changes, err := gitlab.GetMergeRequestChanges(cfg, projectID, mr.IID)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error getting initial changes: %v", err))
 						reviewsMutex.Unlock()
-						continue
+						goto nextMR
 					}
 					newReview := CodeReview{
 						ID:           fmt.Sprintf("gitlab-%s-%d", projectID, mr.IID),
@@ -122,6 +154,7 @@ func monitorMergeRequests(cfg *config.Config) {
 						ProjectID:    projectID,
 						MergeReqID:   mr.IID,
 						IsInProgress: true,
+						Commented:    false,
 					}
 					reviews = append(reviews, newReview)
 					reviewsMutex.Unlock()
@@ -129,7 +162,7 @@ func monitorMergeRequests(cfg *config.Config) {
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error generating review: %v", err))
 						markReviewNotInProgress(newReview.ID)
-						continue
+						goto nextMR
 					}
 					reviewsMutex.Lock()
 					for i := range reviews {
@@ -141,11 +174,9 @@ func monitorMergeRequests(cfg *config.Config) {
 					reviewsMutex.Unlock()
 					state.UpdateGitLabProjectState(projectID, currentCommit, time.Now().Unix())
 					logger.Log(fmt.Sprintf("Added new review for MR #%d", mr.IID))
-				} else {
-					if !exists {
-						reviewsMutex.Unlock()
-					}
 				}
+			nextMR:
+				continue
 			}
 		}
 	}
@@ -289,9 +320,12 @@ func AcceptReview(reviewID string) {
 			logger.Log(fmt.Sprintf("Review accepted: %s", r.Title))
 			if r.Source == "gitlab" {
 				cfg := config.LoadConfig()
-				// Zamiast dwóch osobnych wywołań, wykonujemy jedno scalone wywołanie
 				if err := gitlab.AcceptMergeRequestReview(cfg, r.ProjectID, r.MergeReqID, r.ReviewText); err != nil {
 					logger.Log(fmt.Sprintf("Error accepting review in GitLab: %v", err))
+				} else {
+					reviews[i].Commented = true
+					// Zapisujemy w stanie, że MR został skomentowany
+					state.MarkGitLabProjectCommented(r.ProjectID)
 				}
 			} else if r.Source == "github" {
 				cfg := config.LoadConfig()
@@ -299,6 +333,9 @@ func AcceptReview(reviewID string) {
 				err := github.AcceptPullRequest(cfg, r.Repository, r.PullReqID, reviewMessage)
 				if err != nil {
 					logger.Log(fmt.Sprintf("Error accepting review in GitHub: %v", err))
+				} else {
+					reviews[i].Commented = true
+					// (Jeśli chcesz, możesz też dodać funkcję stanu dla GitHub)
 				}
 			}
 			break

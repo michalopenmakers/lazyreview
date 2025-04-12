@@ -7,6 +7,7 @@ import (
 	"github.com/michalopenmakers/lazyreview/config"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/michalopenmakers/lazyreview/logger"
@@ -232,4 +233,190 @@ func AcceptMergeRequestReview(cfg *config.Config, projectID string, mrID int, re
 	}
 	logger.Log(fmt.Sprintf("Successfully accepted review for MR #%d", mrID))
 	return nil
+}
+
+// HasMyComment - sprawdza, czy istnieje komentarz od "michal.zuchowski" na danym merge requeście
+func HasMyComment(cfg *config.Config, projectID string, mrID int) (bool, error) {
+	logger.Log(fmt.Sprintf("Checking for my comment in MR #%d (project %s)", mrID, projectID))
+	apiUrl := cfg.GitLabConfig.GetFullApiUrl()
+	url := fmt.Sprintf("%s/projects/%s/merge_requests/%d/discussions", apiUrl, projectID, mrID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error creating request for discussions: %v", err))
+		return false, err
+	}
+
+	req.Header.Set("PRIVATE-TOKEN", cfg.GitLabConfig.ApiToken)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error connecting to GitLab API for discussions: %v", err))
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		errMsg := fmt.Sprintf("GitLab API (discussions) responded with status code %d: %s", resp.StatusCode, string(body))
+		logger.Log(errMsg)
+		return false, fmt.Errorf(errMsg)
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error reading discussions response: %v", err))
+		return false, err
+	}
+
+	var discussions []struct {
+		ID    string `json:"id"`
+		Notes []struct {
+			ID     int    `json:"id"`
+			Body   string `json:"body"`
+			Author struct {
+				Username string `json:"username"`
+			} `json:"author"`
+			System bool `json:"system"` // Dodane pole system, aby rozpoznać automatyczne notatki
+		} `json:"notes"`
+	}
+
+	err = json.Unmarshal(bodyBytes, &discussions)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error decoding discussions response: %v", err))
+		return false, err
+	}
+
+	myUsername := "michal.zuchowski"
+	foundMyComment := false
+
+	// Loguj wszystkie dyskusje i notatki do diagnostyki
+	logger.Log(fmt.Sprintf("Found %d discussions in MR #%d", len(discussions), mrID))
+
+	for i, discussion := range discussions {
+		for j, note := range discussion.Notes {
+			logger.Log(fmt.Sprintf("Discussion %d, Note %d - Author: %s, System: %t, Content: %s",
+				i+1, j+1, note.Author.Username, note.System, truncateString(note.Body, 50)))
+
+			// Ignoruj notatki systemowe lub automatyczne notatki przypisania/recenzji
+			isSystemNote := note.System ||
+				strings.Contains(note.Body, "assigned to") ||
+				strings.Contains(note.Body, "requested review from") ||
+				strings.Contains(note.Body, "approved this merge request")
+
+			if note.Author.Username == myUsername && !isSystemNote {
+				logger.Log(fmt.Sprintf("Found my actual comment in MR #%d: %s",
+					mrID, truncateString(note.Body, 50)))
+				foundMyComment = true
+			}
+		}
+	}
+
+	if foundMyComment {
+		logger.Log(fmt.Sprintf("Confirmed my comment found in MR #%d", mrID))
+	} else {
+		logger.Log(fmt.Sprintf("No actual comments by %s found in MR #%d", myUsername, mrID))
+	}
+
+	return foundMyComment, nil
+}
+
+// HasReplyOnMyComment - sprawdza, czy na komentarz użytkownika "michal.zuchowski" ktoś odpowiedział
+func HasReplyOnMyComment(cfg *config.Config, projectID string, mrID int) (bool, error) {
+	logger.Log(fmt.Sprintf("Checking for replies on my comments in MR #%d (project %s)", mrID, projectID))
+	apiUrl := cfg.GitLabConfig.GetFullApiUrl()
+	url := fmt.Sprintf("%s/projects/%s/merge_requests/%d/discussions", apiUrl, projectID, mrID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error creating request for discussions: %v", err))
+		return false, err
+	}
+
+	req.Header.Set("PRIVATE-TOKEN", cfg.GitLabConfig.ApiToken)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error connecting to GitLab API for discussions: %v", err))
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		errMsg := fmt.Sprintf("GitLab API (discussions) responded with status code %d: %s", resp.StatusCode, string(body))
+		logger.Log(errMsg)
+		return false, fmt.Errorf(errMsg)
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error reading discussions response: %v", err))
+		return false, err
+	}
+
+	var discussions []struct {
+		ID    string `json:"id"`
+		Notes []struct {
+			ID     int    `json:"id"`
+			Body   string `json:"body"`
+			Author struct {
+				Username string `json:"username"`
+			} `json:"author"`
+		} `json:"notes"`
+	}
+
+	err = json.Unmarshal(bodyBytes, &discussions)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error decoding discussions response: %v", err))
+		return false, err
+	}
+
+	myUsername := "michal.zuchowski"
+
+	logger.Log(fmt.Sprintf("Analyzing %d discussions for replies in MR #%d", len(discussions), mrID))
+
+	for i, discussion := range discussions {
+		myIndices := []int{}
+		otherIndices := []int{}
+
+		// Zbieramy indeksy notatek użytkownika i pozostałych
+		for j, note := range discussion.Notes {
+			if note.Author.Username == myUsername {
+				myIndices = append(myIndices, j)
+			} else {
+				otherIndices = append(otherIndices, j)
+			}
+		}
+
+		// Sprawdzamy, czy występuje notatka innego użytkownika po notatce użytkownika
+		for _, myIdx := range myIndices {
+			for _, otherIdx := range otherIndices {
+				if otherIdx > myIdx {
+					logger.Log(fmt.Sprintf("Found reply in discussion %d: my note at position %d, reply at position %d",
+						i+1, myIdx+1, otherIdx+1))
+					return true, nil
+				}
+			}
+		}
+	}
+
+	logger.Log(fmt.Sprintf("No replies found to my comments in MR #%d", mrID))
+	return false, nil
+}
+
+// Helper function for min of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// truncateString - pomocnicza funkcja do skracania długich stringów z dodaniem wielokropka
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
