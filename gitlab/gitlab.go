@@ -235,7 +235,6 @@ func AcceptMergeRequestReview(cfg *config.Config, projectID string, mrID int, re
 	return nil
 }
 
-// HasMyComment - sprawdza, czy istnieje komentarz od "michal.zuchowski" na danym merge requeście
 func HasMyComment(cfg *config.Config, projectID string, mrID int) (bool, error) {
 	logger.Log(fmt.Sprintf("Checking for my comment in MR #%d (project %s)", mrID, projectID))
 	apiUrl := cfg.GitLabConfig.GetFullApiUrl()
@@ -254,7 +253,12 @@ func HasMyComment(cfg *config.Config, projectID string, mrID int) (bool, error) 
 		logger.Log(fmt.Sprintf("Error connecting to GitLab API for discussions: %v", err))
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -277,7 +281,7 @@ func HasMyComment(cfg *config.Config, projectID string, mrID int) (bool, error) 
 			Author struct {
 				Username string `json:"username"`
 			} `json:"author"`
-			System bool `json:"system"` // Dodane pole system, aby rozpoznać automatyczne notatki
+			System bool `json:"system"`
 		} `json:"notes"`
 	}
 
@@ -290,7 +294,6 @@ func HasMyComment(cfg *config.Config, projectID string, mrID int) (bool, error) 
 	myUsername := "michal.zuchowski"
 	foundMyComment := false
 
-	// Loguj wszystkie dyskusje i notatki do diagnostyki
 	logger.Log(fmt.Sprintf("Found %d discussions in MR #%d", len(discussions), mrID))
 
 	for i, discussion := range discussions {
@@ -298,7 +301,6 @@ func HasMyComment(cfg *config.Config, projectID string, mrID int) (bool, error) 
 			logger.Log(fmt.Sprintf("Discussion %d, Note %d - Author: %s, System: %t, Content: %s",
 				i+1, j+1, note.Author.Username, note.System, truncateString(note.Body, 50)))
 
-			// Ignoruj notatki systemowe lub automatyczne notatki przypisania/recenzji
 			isSystemNote := note.System ||
 				strings.Contains(note.Body, "assigned to") ||
 				strings.Contains(note.Body, "requested review from") ||
@@ -321,7 +323,6 @@ func HasMyComment(cfg *config.Config, projectID string, mrID int) (bool, error) 
 	return foundMyComment, nil
 }
 
-// HasReplyOnMyComment - sprawdza, czy na komentarz użytkownika "michal.zuchowski" ktoś odpowiedział
 func HasReplyOnMyComment(cfg *config.Config, projectID string, mrID int) (bool, error) {
 	logger.Log(fmt.Sprintf("Checking for replies on my comments in MR #%d (project %s)", mrID, projectID))
 	apiUrl := cfg.GitLabConfig.GetFullApiUrl()
@@ -340,7 +341,12 @@ func HasReplyOnMyComment(cfg *config.Config, projectID string, mrID int) (bool, 
 		logger.Log(fmt.Sprintf("Error connecting to GitLab API for discussions: %v", err))
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -389,7 +395,6 @@ func HasReplyOnMyComment(cfg *config.Config, projectID string, mrID int) (bool, 
 			}
 		}
 
-		// Sprawdzamy, czy występuje notatka innego użytkownika po notatce użytkownika
 		for _, myIdx := range myIndices {
 			for _, otherIdx := range otherIndices {
 				if otherIdx > myIdx {
@@ -405,15 +410,6 @@ func HasReplyOnMyComment(cfg *config.Config, projectID string, mrID int) (bool, 
 	return false, nil
 }
 
-// Helper function for min of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// truncateString - pomocnicza funkcja do skracania długich stringów z dodaniem wielokropka
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s

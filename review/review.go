@@ -39,6 +39,14 @@ func monitorMergeRequests(cfg *config.Config) {
 		return
 	}
 
+	// Natychmiastowe sprawdzenie przy starcie, bez czekania na ticker
+	logger.Log("Starting immediate GitLab merge requests check")
+	if cfg.GitLabConfig.ApiToken != "" {
+		checkGitLabMergeRequests(cfg)
+	} else {
+		logger.Log("GitLab API token not configured")
+	}
+
 	ticker := time.NewTicker(time.Duration(cfg.MergeRequestsPollingInterval) * time.Second)
 	defer ticker.Stop()
 
@@ -53,132 +61,132 @@ func monitorMergeRequests(cfg *config.Config) {
 				logger.Log("GitLab API token not configured")
 				continue
 			}
-			mergeRequests, err := gitlab.GetMergeRequestsToReview(cfg)
+			checkGitLabMergeRequests(cfg)
+		}
+	}
+}
+
+func checkGitLabMergeRequests(cfg *config.Config) {
+	mergeRequests, err := gitlab.GetMergeRequestsToReview(cfg)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error fetching merge requests: %v", err))
+		return
+	}
+	for _, mr := range mergeRequests {
+		projectID := fmt.Sprintf("%d", mr.ProjectID)
+
+		// Od razu sprawdzamy, czy merge request został skomentowany
+		hasMyComment, err := gitlab.HasMyComment(cfg, projectID, mr.IID)
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error checking if MR #%d has my comment: %v", mr.IID, err))
+		}
+
+		hasReply := false
+
+		if hasMyComment {
+			hasReply, err = gitlab.HasReplyOnMyComment(cfg, projectID, mr.IID)
 			if err != nil {
-				logger.Log(fmt.Sprintf("Error fetching merge requests: %v", err))
-				continue
+				logger.Log(fmt.Sprintf("Error checking for replies on MR #%d: %v", mr.IID, err))
 			}
-			for _, mr := range mergeRequests {
-				projectID := fmt.Sprintf("%d", mr.ProjectID)
+			if !hasReply {
+				logger.Log(fmt.Sprintf("MR #%d already has my comment with no reply, skipping", mr.IID))
+				continue // Przejdź do następnego MR, bez przetwarzania tego
+			}
+			logger.Log(fmt.Sprintf("MR #%d has a reply to my comment, will process", mr.IID))
+		}
 
-				// Od razu sprawdzamy, czy merge request został skomentowany
-				hasMyComment, err := gitlab.HasMyComment(cfg, projectID, mr.IID)
+		exists := false
+		reviewsMutex.Lock()
+		for i, review := range reviews {
+			if review.Source == "gitlab" && review.ProjectID == projectID && review.MergeReqID == mr.IID {
+				exists = true
+				currentCommit, err := gitlab.GetCurrentCommit(cfg, projectID, mr.IID)
 				if err != nil {
-					logger.Log(fmt.Sprintf("Error checking if MR #%d has my comment: %v", mr.IID, err))
+					logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
+					break
 				}
 
-				// Domyślnie: brak odpowiedzi
-				hasReply := false
-
-				// Jeśli mamy już komentarz, sprawdzamy czy pojawiła się odpowiedź
-				if hasMyComment {
-					hasReply, err = gitlab.HasReplyOnMyComment(cfg, projectID, mr.IID)
-					if err != nil {
-						logger.Log(fmt.Sprintf("Error checking for replies on MR #%d: %v", mr.IID, err))
-					}
-					if !hasReply {
-						logger.Log(fmt.Sprintf("MR #%d already has my comment with no reply, skipping", mr.IID))
-						continue // Przejdź do następnego MR, bez przetwarzania tego
-					}
-					logger.Log(fmt.Sprintf("MR #%d has a reply to my comment, will process", mr.IID))
-				}
-
-				exists := false
-				reviewsMutex.Lock()
-				for i, review := range reviews {
-					if review.Source == "gitlab" && review.ProjectID == projectID && review.MergeReqID == mr.IID {
-						exists = true
-						currentCommit, err := gitlab.GetCurrentCommit(cfg, projectID, mr.IID)
-						if err != nil {
-							logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
-							break
-						}
-
-						// Jeśli commit się nie zmienił i mamy komentarz bez odpowiedzi, pomijamy
-						if currentCommit == review.LastCommit && hasMyComment && !hasReply {
-							logger.Log(fmt.Sprintf("MR #%d: same commit and already commented with no reply, skipping", mr.IID))
-							reviewsMutex.Unlock()
-							goto nextMR
-						} else if currentCommit != review.LastCommit && !review.IsInProgress {
-							// Nowy commit, przetwarzamy nawet jeśli już skomentowaliśmy
-							logger.Log(fmt.Sprintf("New commit detected for MR #%d, generating review", mr.IID))
-							reviews[i].IsInProgress = true
-							reviewsMutex.Unlock()
-							changes, err := gitlab.GetMergeRequestChanges(cfg, projectID, mr.IID)
-							if err != nil {
-								logger.Log(fmt.Sprintf("Error getting changes: %v", err))
-								markReviewNotInProgress(review.ID)
-								goto nextMR
-							}
-							reviewText, err := openai.CodeReview(cfg, changes, false)
-							if err != nil {
-								logger.Log(fmt.Sprintf("Error generating review: %v", err))
-								markReviewNotInProgress(review.ID)
-								goto nextMR
-							}
-							reviewsMutex.Lock()
-							reviews[i].LastCommit = currentCommit
-							reviews[i].ReviewText = reviewText
-							reviews[i].ReviewedAt = time.Now()
-							reviews[i].IsInProgress = false
-							reviews[i].Commented = false
-							reviewsMutex.Unlock()
-							state.UpdateGitLabProjectState(projectID, currentCommit, time.Now().Unix())
-							logger.Log(fmt.Sprintf("Updated review for MR #%d", mr.IID))
-						} else {
-							reviewsMutex.Unlock()
-						}
-						break
-					}
-				}
-				if !exists {
-					currentCommit, err := gitlab.GetCurrentCommit(cfg, projectID, mr.IID)
-					if err != nil {
-						logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
-						reviewsMutex.Unlock()
-						goto nextMR
-					}
+				if currentCommit == review.LastCommit && hasMyComment && !hasReply {
+					logger.Log(fmt.Sprintf("MR #%d: same commit and already commented with no reply, skipping", mr.IID))
+					reviewsMutex.Unlock()
+					goto nextMR
+				} else if currentCommit != review.LastCommit && !review.IsInProgress {
+					logger.Log(fmt.Sprintf("New commit detected for MR #%d, generating review", mr.IID))
+					reviews[i].IsInProgress = true
+					reviewsMutex.Unlock()
 					changes, err := gitlab.GetMergeRequestChanges(cfg, projectID, mr.IID)
 					if err != nil {
-						logger.Log(fmt.Sprintf("Error getting initial changes: %v", err))
-						reviewsMutex.Unlock()
+						logger.Log(fmt.Sprintf("Error getting changes: %v", err))
+						markReviewNotInProgress(review.ID)
 						goto nextMR
 					}
-					newReview := CodeReview{
-						ID:           fmt.Sprintf("gitlab-%s-%d", projectID, mr.IID),
-						Title:        mr.Title,
-						URL:          mr.WebURL,
-						LastCommit:   currentCommit,
-						ReviewedAt:   time.Now(),
-						Source:       "gitlab",
-						ProjectID:    projectID,
-						MergeReqID:   mr.IID,
-						IsInProgress: true,
-						Commented:    false,
-					}
-					reviews = append(reviews, newReview)
-					reviewsMutex.Unlock()
 					reviewText, err := openai.CodeReview(cfg, changes, false)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error generating review: %v", err))
-						markReviewNotInProgress(newReview.ID)
+						markReviewNotInProgress(review.ID)
 						goto nextMR
 					}
 					reviewsMutex.Lock()
-					for i := range reviews {
-						if reviews[i].ID == newReview.ID {
-							reviews[i].ReviewText = reviewText
-							reviews[i].IsInProgress = false
-						}
-					}
+					reviews[i].LastCommit = currentCommit
+					reviews[i].ReviewText = reviewText
+					reviews[i].ReviewedAt = time.Now()
+					reviews[i].IsInProgress = false
+					reviews[i].Commented = false
 					reviewsMutex.Unlock()
 					state.UpdateGitLabProjectState(projectID, currentCommit, time.Now().Unix())
-					logger.Log(fmt.Sprintf("Added new review for MR #%d", mr.IID))
+					logger.Log(fmt.Sprintf("Updated review for MR #%d", mr.IID))
+				} else {
+					reviewsMutex.Unlock()
 				}
-			nextMR:
-				continue
+				break
 			}
 		}
+		if !exists {
+			currentCommit, err := gitlab.GetCurrentCommit(cfg, projectID, mr.IID)
+			if err != nil {
+				logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
+				reviewsMutex.Unlock()
+				goto nextMR
+			}
+			changes, err := gitlab.GetMergeRequestChanges(cfg, projectID, mr.IID)
+			if err != nil {
+				logger.Log(fmt.Sprintf("Error getting initial changes: %v", err))
+				reviewsMutex.Unlock()
+				goto nextMR
+			}
+			newReview := CodeReview{
+				ID:           fmt.Sprintf("gitlab-%s-%d", projectID, mr.IID),
+				Title:        mr.Title,
+				URL:          mr.WebURL,
+				LastCommit:   currentCommit,
+				ReviewedAt:   time.Now(),
+				Source:       "gitlab",
+				ProjectID:    projectID,
+				MergeReqID:   mr.IID,
+				IsInProgress: true,
+				Commented:    false,
+			}
+			reviews = append(reviews, newReview)
+			reviewsMutex.Unlock()
+			reviewText, err := openai.CodeReview(cfg, changes, false)
+			if err != nil {
+				logger.Log(fmt.Sprintf("Error generating review: %v", err))
+				markReviewNotInProgress(newReview.ID)
+				goto nextMR
+			}
+			reviewsMutex.Lock()
+			for i := range reviews {
+				if reviews[i].ID == newReview.ID {
+					reviews[i].ReviewText = reviewText
+					reviews[i].IsInProgress = false
+				}
+			}
+			reviewsMutex.Unlock()
+			state.UpdateGitLabProjectState(projectID, currentCommit, time.Now().Unix())
+			logger.Log(fmt.Sprintf("Added new review for MR #%d", mr.IID))
+		}
+	nextMR:
+		continue
 	}
 }
 
@@ -186,6 +194,13 @@ func monitorReviewRequests(cfg *config.Config) {
 	if !cfg.GitHubConfig.Enabled {
 		logger.Log("GitHub integration is disabled, not monitoring PRs")
 		return
+	}
+
+	logger.Log("Starting immediate GitHub pull requests check")
+	if cfg.GitHubConfig.ApiToken != "" {
+		checkGitHubPullRequests(cfg)
+	} else {
+		logger.Log("GitHub API token not configured")
 	}
 
 	ticker := time.NewTicker(time.Duration(cfg.ReviewRequestsPollingInterval) * time.Second)
@@ -202,99 +217,103 @@ func monitorReviewRequests(cfg *config.Config) {
 				logger.Log("GitHub API token not configured")
 				continue
 			}
-			pullRequests, err := github.GetPullRequestsToReview(cfg)
-			if err != nil {
-				logger.Log(fmt.Sprintf("Error fetching pull requests: %v", err))
-				continue
-			}
-			for _, pr := range pullRequests {
-				exists := false
-				reviewsMutex.Lock()
-				for i, review := range reviews {
-					if review.Source == "github" && review.Repository == pr.Repository && review.PullReqID == pr.Number {
-						exists = true
-						currentCommit, err := github.GetCurrentCommit(cfg, pr.Repository, pr.Number)
-						if err != nil {
-							logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
-							break
-						}
-						if currentCommit != review.LastCommit && !review.IsInProgress {
-							logger.Log(fmt.Sprintf("New commit detected for PR #%d in %s, generating review", pr.Number, pr.Repository))
-							reviews[i].IsInProgress = true
-							reviewsMutex.Unlock()
-							changes, err := github.GetPullRequestChanges(cfg, pr.Repository, pr.Number)
-							if err != nil {
-								logger.Log(fmt.Sprintf("Error getting changes: %v", err))
-								markReviewNotInProgress(review.ID)
-								break
-							}
-							reviewText, err := openai.CodeReview(cfg, changes, false)
-							if err != nil {
-								logger.Log(fmt.Sprintf("Error generating review: %v", err))
-								markReviewNotInProgress(review.ID)
-								break
-							}
-							reviewsMutex.Lock()
-							reviews[i].LastCommit = currentCommit
-							reviews[i].ReviewText = reviewText
-							reviews[i].ReviewedAt = time.Now()
-							reviews[i].IsInProgress = false
-							reviewsMutex.Unlock()
-							state.UpdateGitHubRepoState(pr.Repository, currentCommit, time.Now().Unix())
-							logger.Log(fmt.Sprintf("Updated review for PR #%d in %s", pr.Number, pr.Repository))
-						} else {
-							reviewsMutex.Unlock()
-						}
-						break
-					}
+			checkGitHubPullRequests(cfg)
+		}
+	}
+}
+
+func checkGitHubPullRequests(cfg *config.Config) {
+	pullRequests, err := github.GetPullRequestsToReview(cfg)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error fetching pull requests: %v", err))
+		return
+	}
+	for _, pr := range pullRequests {
+		exists := false
+		reviewsMutex.Lock()
+		for i, review := range reviews {
+			if review.Source == "github" && review.Repository == pr.Repository && review.PullReqID == pr.Number {
+				exists = true
+				currentCommit, err := github.GetCurrentCommit(cfg, pr.Repository, pr.Number)
+				if err != nil {
+					logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
+					break
 				}
-				if !exists {
-					currentCommit, err := github.GetCurrentCommit(cfg, pr.Repository, pr.Number)
-					if err != nil {
-						logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
-						reviewsMutex.Unlock()
-						continue
-					}
+				if currentCommit != review.LastCommit && !review.IsInProgress {
+					logger.Log(fmt.Sprintf("New commit detected for PR #%d in %s, generating review", pr.Number, pr.Repository))
+					reviews[i].IsInProgress = true
+					reviewsMutex.Unlock()
 					changes, err := github.GetPullRequestChanges(cfg, pr.Repository, pr.Number)
 					if err != nil {
-						logger.Log(fmt.Sprintf("Error getting initial changes: %v", err))
-						reviewsMutex.Unlock()
-						continue
+						logger.Log(fmt.Sprintf("Error getting changes: %v", err))
+						markReviewNotInProgress(review.ID)
+						break
 					}
-					newReview := CodeReview{
-						ID:           fmt.Sprintf("github-%s-%d", pr.Repository, pr.Number),
-						Title:        pr.Title,
-						URL:          pr.HTMLURL,
-						LastCommit:   currentCommit,
-						ReviewedAt:   time.Now(),
-						Source:       "github",
-						Repository:   pr.Repository,
-						PullReqID:    pr.Number,
-						IsInProgress: true,
-					}
-					reviews = append(reviews, newReview)
-					reviewsMutex.Unlock()
 					reviewText, err := openai.CodeReview(cfg, changes, false)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error generating review: %v", err))
-						markReviewNotInProgress(newReview.ID)
-						continue
+						markReviewNotInProgress(review.ID)
+						break
 					}
 					reviewsMutex.Lock()
-					for i := range reviews {
-						if reviews[i].ID == newReview.ID {
-							reviews[i].ReviewText = reviewText
-							reviews[i].IsInProgress = false
-						}
-					}
+					reviews[i].LastCommit = currentCommit
+					reviews[i].ReviewText = reviewText
+					reviews[i].ReviewedAt = time.Now()
+					reviews[i].IsInProgress = false
 					reviewsMutex.Unlock()
 					state.UpdateGitHubRepoState(pr.Repository, currentCommit, time.Now().Unix())
-					logger.Log(fmt.Sprintf("Added new review for PR #%d in %s", pr.Number, pr.Repository))
+					logger.Log(fmt.Sprintf("Updated review for PR #%d in %s", pr.Number, pr.Repository))
 				} else {
-					if !exists {
-						reviewsMutex.Unlock()
-					}
+					reviewsMutex.Unlock()
 				}
+				break
+			}
+		}
+		if !exists {
+			currentCommit, err := github.GetCurrentCommit(cfg, pr.Repository, pr.Number)
+			if err != nil {
+				logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
+				reviewsMutex.Unlock()
+				continue
+			}
+			changes, err := github.GetPullRequestChanges(cfg, pr.Repository, pr.Number)
+			if err != nil {
+				logger.Log(fmt.Sprintf("Error getting initial changes: %v", err))
+				reviewsMutex.Unlock()
+				continue
+			}
+			newReview := CodeReview{
+				ID:           fmt.Sprintf("github-%s-%d", pr.Repository, pr.Number),
+				Title:        pr.Title,
+				URL:          pr.HTMLURL,
+				LastCommit:   currentCommit,
+				ReviewedAt:   time.Now(),
+				Source:       "github",
+				Repository:   pr.Repository,
+				PullReqID:    pr.Number,
+				IsInProgress: true,
+			}
+			reviews = append(reviews, newReview)
+			reviewsMutex.Unlock()
+			reviewText, err := openai.CodeReview(cfg, changes, false)
+			if err != nil {
+				logger.Log(fmt.Sprintf("Error generating review: %v", err))
+				markReviewNotInProgress(newReview.ID)
+				continue
+			}
+			reviewsMutex.Lock()
+			for i := range reviews {
+				if reviews[i].ID == newReview.ID {
+					reviews[i].ReviewText = reviewText
+					reviews[i].IsInProgress = false
+				}
+			}
+			reviewsMutex.Unlock()
+			state.UpdateGitHubRepoState(pr.Repository, currentCommit, time.Now().Unix())
+			logger.Log(fmt.Sprintf("Added new review for PR #%d in %s", pr.Number, pr.Repository))
+		} else {
+			if !exists {
+				reviewsMutex.Unlock()
 			}
 		}
 	}
