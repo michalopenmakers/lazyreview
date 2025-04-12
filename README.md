@@ -1,6 +1,6 @@
 # LazyReview
 
-[![Build Status](https://github.com/michalopenmakers/lazyreview/workflows/build/badge.svg)](https://github.com/michalopenmakers/lazyreview/actions)
+[![Go](https://github.com/michalopenmakers/lazyreview/actions/workflows/go.yml/badge.svg)](https://github.com/michalopenmakers/lazyreview/actions/workflows/go.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/michalopenmakers/lazyreview)](https://goreportcard.com/report/github.com/michalopenmakers/lazyreview)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
