@@ -30,6 +30,7 @@ type CodeReview struct {
 	PullReqID    int
 	ReviewText   string
 	IsInProgress bool
+	Accepted     bool
 }
 
 func monitorMergeRequests(cfg *config.Config) {
@@ -285,6 +286,27 @@ func markReviewNotInProgress(reviewID string) {
 	for i, r := range reviews {
 		if r.ID == reviewID {
 			reviews[i].IsInProgress = false
+			break
+		}
+	}
+}
+
+func AcceptReview(reviewID string) {
+	reviewsMutex.Lock()
+	defer reviewsMutex.Unlock()
+	for i, r := range reviews {
+		if r.ID == reviewID {
+			reviews[i].Accepted = true
+			logger.Log(fmt.Sprintf("Review accepted: %s", r.Title))
+			if r.Source == "gitlab" {
+				cfg := config.LoadConfig()
+				// Teraz do komentarza dodajemy stały tekst oraz pełną odpowiedź AI
+				reviewMessage := "Review accepted: chore: add comment to EC2 example configuration\n" + r.ReviewText
+				err := gitlab.AcceptMergeRequest(cfg, r.ProjectID, r.MergeReqID, reviewMessage)
+				if err != nil {
+					logger.Log(fmt.Sprintf("Error accepting review in GitLab: %v", err))
+				}
+			}
 			break
 		}
 	}

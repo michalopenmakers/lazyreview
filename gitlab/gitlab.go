@@ -1,6 +1,7 @@
 package gitlab
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/michalopenmakers/lazyreview/config"
@@ -244,4 +245,44 @@ func GetCurrentCommit(cfg *config.Config, projectID string, mrID int) (string, e
 	}
 
 	return "", fmt.Errorf("no commits found for merge request")
+}
+
+// Dodaj poniższą funkcję do akceptowania recenzji w GitLab poprzez dodanie komentarza
+func AcceptMergeRequest(cfg *config.Config, projectID string, mrID int, reviewMessage string) error {
+	apiUrl := cfg.GitLabConfig.GetFullApiUrl()
+	url := fmt.Sprintf("%s/projects/%s/merge_requests/%d/notes", apiUrl, projectID, mrID)
+
+	payload := map[string]string{
+		"body": reviewMessage,
+	}
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error marshaling accept review payload: %v", err))
+		return err
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error creating request for accepting review: %v", err))
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("PRIVATE-TOKEN", cfg.GitLabConfig.ApiToken)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error sending accept review request: %v", err))
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		errMsg := fmt.Sprintf("GitLab API responded with status code %d on accept review: %s", resp.StatusCode, string(body))
+		logger.Log(errMsg)
+		return fmt.Errorf(errMsg)
+	}
+	logger.Log(fmt.Sprintf("Successfully accepted review for MR #%d in project %s", mrID, projectID))
+	return nil
 }

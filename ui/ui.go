@@ -21,6 +21,7 @@ import (
 	"github.com/michalopenmakers/lazyreview/config"
 	"github.com/michalopenmakers/lazyreview/logger"
 	"github.com/michalopenmakers/lazyreview/notifications"
+	"github.com/michalopenmakers/lazyreview/review"
 )
 
 //go:embed icon.png
@@ -57,16 +58,27 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 		}
 		currentReviewIndex = -1
 	} else {
-		for i, review := range reviews {
-			reviewIndex := i
-			reviewButton := widget.NewButton(review.Title, func() {
+		for _, r := range reviews {
+			currentReview := r
+			btnSelect := widget.NewButton(currentReview.Title, func() {
 				if reviewDetails != nil {
-					reviewDetails.SetText(review.ReviewText)
-					currentReviewIndex = reviewIndex
-					setStatus(fmt.Sprintf("Showing review: %s", review.Title))
+					reviewDetails.SetText(currentReview.ReviewText)
+					setStatus(fmt.Sprintf("Showing review: %s", currentReview.Title))
 				}
 			})
-			reviewsList.Add(reviewButton)
+			var btnAccept *widget.Button
+			if currentReview.Accepted {
+				btnAccept = widget.NewButton("Accepted", func() {}) // przycisk wyłączony
+				btnAccept.Disable()
+			} else {
+				btnAccept = widget.NewButton("Accept", func() {
+					review.AcceptReview(currentReview.ID)
+					setStatus(fmt.Sprintf("Review accepted: %s", currentReview.Title))
+					updateReviewsList(reviewsList, reviewDetails)
+				})
+			}
+			row := container.NewHBox(btnSelect, btnAccept)
+			reviewsList.Add(row)
 		}
 
 		if currentReviewIndex >= 0 && currentReviewIndex < len(reviews) {
