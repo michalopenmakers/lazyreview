@@ -1,27 +1,23 @@
 package store
 
 import (
-	"errors"
 	"sync"
 )
 
-var (
-	hashStorage = make(map[string]string)
-	mu          sync.Mutex
-)
-
-func GetLastHash(reviewID string) (string, error) {
-	mu.Lock()
-	defer mu.Unlock()
-	if h, ok := hashStorage[reviewID]; ok {
-		return h, nil
-	}
-	return "", errors.New("hash not found")
+type DataStore struct {
+	Data map[string]string
 }
 
-func UpdateLastHash(reviewID string, newHash string) error {
-	mu.Lock()
-	defer mu.Unlock()
-	hashStorage[reviewID] = newHash
-	return nil
+var storeMutex = &sync.Mutex{}
+var instance *DataStore
+
+func GetStore() *DataStore {
+	if instance == nil {
+		storeMutex.Lock()
+		defer storeMutex.Unlock()
+		if instance == nil {
+			instance = &DataStore{Data: make(map[string]string)}
+		}
+	}
+	return instance
 }

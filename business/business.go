@@ -1,8 +1,10 @@
 package business
 
 import (
+	"fmt"
 	"github.com/michalopenmakers/lazyreview/config"
 	"github.com/michalopenmakers/lazyreview/review"
+	"github.com/michalopenmakers/lazyreview/store"
 )
 
 func InitializeApplication(cfg *config.Config) {
@@ -10,7 +12,10 @@ func InitializeApplication(cfg *config.Config) {
 }
 
 func GetReviews() []review.CodeReview {
-	return review.GetCodeReviews()
+	reviews := review.GetCodeReviews()
+	dataStore := store.GetStore()
+	dataStore.Data["reviewCount"] = fmt.Sprintf("%d", len(reviews))
+	return reviews
 }
 
 func RestartMonitoring(cfg *config.Config) {

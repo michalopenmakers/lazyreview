@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/michalopenmakers/lazyreview/logger"
 	"os"
 	"path/filepath"
 	"sync"
@@ -17,7 +18,6 @@ type ProjectState struct {
 type AppState struct {
 	GitLabProjects map[string]*ProjectState
 	GitHubRepos    map[string]*ProjectState
-	CurrentState   string
 }
 
 var (
@@ -105,7 +105,11 @@ func UpdateGitLabProjectState(projectID, commitID string, timestamp int64) {
 			ReviewCount:        1,
 		}
 	}
-	SaveState()
+	err := SaveState()
+	if err != nil {
+		logger.Log("Error saving state: " + err.Error())
+		return
+	}
 }
 
 func UpdateGitHubRepoState(repoName, commitID string, timestamp int64) {
@@ -128,26 +132,4 @@ func UpdateGitHubRepoState(repoName, commitID string, timestamp int64) {
 	if err != nil {
 		return
 	}
-}
-
-func GetGitLabLastCommit(projectID string) string {
-	initialize()
-	stateMutex.RLock()
-	defer stateMutex.RUnlock()
-
-	if project, exists := appState.GitLabProjects[projectID]; exists {
-		return project.LastReviewedCommit
-	}
-	return ""
-}
-
-func GetGitHubLastCommit(repoName string) string {
-	initialize()
-	stateMutex.RLock()
-	defer stateMutex.RUnlock()
-
-	if repo, exists := appState.GitHubRepos[repoName]; exists {
-		return repo.LastReviewedCommit
-	}
-	return ""
 }

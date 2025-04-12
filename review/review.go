@@ -2,15 +2,20 @@ package review
 
 import (
 	"fmt"
-	"sync"
-	"time"
-
 	"github.com/michalopenmakers/lazyreview/config"
 	"github.com/michalopenmakers/lazyreview/github"
 	"github.com/michalopenmakers/lazyreview/gitlab"
 	"github.com/michalopenmakers/lazyreview/logger"
 	"github.com/michalopenmakers/lazyreview/openai"
+	"github.com/michalopenmakers/lazyreview/state"
+	"sync"
+	"time"
+	// ...existing imports...
 )
+
+var stopChan = make(chan struct{})
+var reviewsMutex = &sync.Mutex{}
+var reviews []CodeReview
 
 type CodeReview struct {
 	ID           string
@@ -18,55 +23,13 @@ type CodeReview struct {
 	URL          string
 	LastCommit   string
 	ReviewedAt   time.Time
-	ReviewText   string
 	Source       string
 	ProjectID    string
 	MergeReqID   int
 	Repository   string
 	PullReqID    int
+	ReviewText   string
 	IsInProgress bool
-}
-
-var (
-	reviews        []CodeReview
-	reviewsMutex   sync.Mutex
-	stopChan       chan bool
-	isMonitoring   bool
-	monitoringLock sync.Mutex
-)
-
-func GetCodeReviews() []CodeReview {
-	reviewsMutex.Lock()
-	defer reviewsMutex.Unlock()
-	return reviews
-}
-
-func StopMonitoring() {
-	monitoringLock.Lock()
-	defer monitoringLock.Unlock()
-
-	if isMonitoring {
-		stopChan <- true
-		stopChan <- true
-		close(stopChan)
-		isMonitoring = false
-		logger.Log("Monitoring stopped")
-	}
-}
-
-func StartMonitoring(cfg *config.Config) {
-	monitoringLock.Lock()
-	defer monitoringLock.Unlock()
-
-	if isMonitoring {
-		return
-	}
-
-	stopChan = make(chan bool, 2)
-	isMonitoring = true
-
-	go monitorMergeRequests(cfg)
-	go monitorReviewRequests(cfg)
 }
 
 func monitorMergeRequests(cfg *config.Config) {
@@ -85,18 +48,15 @@ func monitorMergeRequests(cfg *config.Config) {
 			return
 		case <-ticker.C:
 			logger.Log("Pulling new merge requests")
-
 			if cfg.GitLabConfig.ApiToken == "" {
 				logger.Log("GitLab API token not configured")
 				continue
 			}
-
 			mergeRequests, err := gitlab.GetMergeRequestsToReview(cfg)
 			if err != nil {
 				logger.Log(fmt.Sprintf("Error fetching merge requests: %v", err))
 				continue
 			}
-
 			for _, mr := range mergeRequests {
 				projectID := fmt.Sprintf("%d", mr.ProjectID)
 				exists := false
@@ -109,7 +69,6 @@ func monitorMergeRequests(cfg *config.Config) {
 							logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
 							break
 						}
-
 						if currentCommit != review.LastCommit && !review.IsInProgress {
 							logger.Log(fmt.Sprintf("New commit detected for MR #%d, generating review", mr.IID))
 							reviews[i].IsInProgress = true
@@ -132,6 +91,7 @@ func monitorMergeRequests(cfg *config.Config) {
 							reviews[i].ReviewedAt = time.Now()
 							reviews[i].IsInProgress = false
 							reviewsMutex.Unlock()
+							state.UpdateGitLabProjectState(projectID, currentCommit, time.Now().Unix())
 							logger.Log(fmt.Sprintf("Updated review for MR #%d", mr.IID))
 						} else {
 							reviewsMutex.Unlock()
@@ -139,7 +99,6 @@ func monitorMergeRequests(cfg *config.Config) {
 						break
 					}
 				}
-
 				if !exists {
 					currentCommit, err := gitlab.GetCurrentCommit(cfg, projectID, mr.IID)
 					if err != nil {
@@ -147,7 +106,12 @@ func monitorMergeRequests(cfg *config.Config) {
 						reviewsMutex.Unlock()
 						continue
 					}
-					changes, err := gitlab.GetMergeRequestChanges(cfg, projectID, mr.IID)
+					var changes string
+					if state.IsFirstGitLabReview(projectID) {
+						changes, err = gitlab.GetProjectCode(projectID)
+					} else {
+						changes, err = gitlab.GetMergeRequestChanges(cfg, projectID, mr.IID)
+					}
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error getting initial changes: %v", err))
 						reviewsMutex.Unlock()
@@ -166,7 +130,7 @@ func monitorMergeRequests(cfg *config.Config) {
 					}
 					reviews = append(reviews, newReview)
 					reviewsMutex.Unlock()
-					reviewText, err := openai.CodeReview(cfg, changes, true)
+					reviewText, err := openai.CodeReview(cfg, changes, state.IsFirstGitLabReview(projectID))
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error generating review: %v", err))
 						markReviewNotInProgress(newReview.ID)
@@ -177,10 +141,11 @@ func monitorMergeRequests(cfg *config.Config) {
 						if reviews[i].ID == newReview.ID {
 							reviews[i].ReviewText = reviewText
 							reviews[i].IsInProgress = false
-							logger.Log(fmt.Sprintf("Added new review for MR #%d", mr.IID))
 						}
 					}
 					reviewsMutex.Unlock()
+					state.UpdateGitLabProjectState(projectID, currentCommit, time.Now().Unix())
+					logger.Log(fmt.Sprintf("Added new review for MR #%d", mr.IID))
 				} else {
 					if !exists {
 						reviewsMutex.Unlock()
@@ -207,18 +172,15 @@ func monitorReviewRequests(cfg *config.Config) {
 			return
 		case <-ticker.C:
 			logger.Log("Pulling new pull requests")
-
 			if cfg.GitHubConfig.ApiToken == "" {
 				logger.Log("GitHub API token not configured")
 				continue
 			}
-
 			pullRequests, err := github.GetPullRequestsToReview(cfg)
 			if err != nil {
 				logger.Log(fmt.Sprintf("Error fetching pull requests: %v", err))
 				continue
 			}
-
 			for _, pr := range pullRequests {
 				exists := false
 				reviewsMutex.Lock()
@@ -230,7 +192,6 @@ func monitorReviewRequests(cfg *config.Config) {
 							logger.Log(fmt.Sprintf("Error getting current commit: %v", err))
 							break
 						}
-
 						if currentCommit != review.LastCommit && !review.IsInProgress {
 							logger.Log(fmt.Sprintf("New commit detected for PR #%d in %s, generating review", pr.Number, pr.Repository))
 							reviews[i].IsInProgress = true
@@ -253,6 +214,7 @@ func monitorReviewRequests(cfg *config.Config) {
 							reviews[i].ReviewedAt = time.Now()
 							reviews[i].IsInProgress = false
 							reviewsMutex.Unlock()
+							state.UpdateGitHubRepoState(pr.Repository, currentCommit, time.Now().Unix())
 							logger.Log(fmt.Sprintf("Updated review for PR #%d in %s", pr.Number, pr.Repository))
 						} else {
 							reviewsMutex.Unlock()
@@ -260,7 +222,6 @@ func monitorReviewRequests(cfg *config.Config) {
 						break
 					}
 				}
-
 				if !exists {
 					currentCommit, err := github.GetCurrentCommit(cfg, pr.Repository, pr.Number)
 					if err != nil {
@@ -268,7 +229,12 @@ func monitorReviewRequests(cfg *config.Config) {
 						reviewsMutex.Unlock()
 						continue
 					}
-					changes, err := github.GetPullRequestChanges(cfg, pr.Repository, pr.Number)
+					var changes string
+					if state.IsFirstGitHubReview(pr.Repository) {
+						changes, err = github.GetRepositoryCode(cfg, pr.Repository)
+					} else {
+						changes, err = github.GetPullRequestChanges(cfg, pr.Repository, pr.Number)
+					}
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error getting initial changes: %v", err))
 						reviewsMutex.Unlock()
@@ -287,7 +253,7 @@ func monitorReviewRequests(cfg *config.Config) {
 					}
 					reviews = append(reviews, newReview)
 					reviewsMutex.Unlock()
-					reviewText, err := openai.CodeReview(cfg, changes, true)
+					reviewText, err := openai.CodeReview(cfg, changes, state.IsFirstGitHubReview(pr.Repository))
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error generating review: %v", err))
 						markReviewNotInProgress(newReview.ID)
@@ -298,10 +264,11 @@ func monitorReviewRequests(cfg *config.Config) {
 						if reviews[i].ID == newReview.ID {
 							reviews[i].ReviewText = reviewText
 							reviews[i].IsInProgress = false
-							logger.Log(fmt.Sprintf("Added new review for PR #%d in %s", pr.Number, pr.Repository))
 						}
 					}
 					reviewsMutex.Unlock()
+					state.UpdateGitHubRepoState(pr.Repository, currentCommit, time.Now().Unix())
+					logger.Log(fmt.Sprintf("Added new review for PR #%d in %s", pr.Number, pr.Repository))
 				} else {
 					if !exists {
 						reviewsMutex.Unlock()
@@ -312,14 +279,29 @@ func monitorReviewRequests(cfg *config.Config) {
 	}
 }
 
-func markReviewNotInProgress(reviewId string) {
+func markReviewNotInProgress(reviewID string) {
 	reviewsMutex.Lock()
 	defer reviewsMutex.Unlock()
-
-	for i := range reviews {
-		if reviews[i].ID == reviewId {
+	for i, r := range reviews {
+		if r.ID == reviewID {
 			reviews[i].IsInProgress = false
 			break
 		}
 	}
+}
+
+func StartMonitoring(cfg *config.Config) {
+	stopChan = make(chan struct{})
+	go monitorMergeRequests(cfg)
+	go monitorReviewRequests(cfg)
+}
+
+func StopMonitoring() {
+	close(stopChan)
+}
+
+func GetCodeReviews() []CodeReview {
+	reviewsMutex.Lock()
+	defer reviewsMutex.Unlock()
+	return reviews
 }
