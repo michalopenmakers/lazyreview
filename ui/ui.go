@@ -262,16 +262,30 @@ func buildDetailsSection(reviewDetails *widget.Entry) fyne.CanvasObject {
 		}
 	})
 	acceptButton.Disable()
-	acceptButton.Hide() // domyślnie przycisk ukryty
+	acceptButton.Hide()
+
+	var isEditing bool = false
+	var editButton *widget.Button
+	editButton = widget.NewButton("Edit", func() {
+		if !isEditing {
+			reviewDetails.Enable()
+			editButton.SetText("Save")
+			isEditing = true
+		} else {
+			reviewDetails.Disable()
+			editButton.SetText("Edit")
+			isEditing = false
+		}
+	})
 
 	detailsLabel := widget.NewLabel("Review Details:")
 	detailsLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-	// Ułóż etykietę po lewej, a przycisk Accept po prawej w jednej linii
 	headerRow := container.NewHBox(
 		detailsLabel,
 		layout.NewSpacer(),
 		acceptButton,
+		editButton,
 	)
 
 	headerContainer := container.NewVBox(
