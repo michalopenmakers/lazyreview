@@ -207,7 +207,7 @@ func buildToolbar(refreshAction func(), settingsAction func()) *widget.Toolbar {
 		widget.NewToolbarAction(theme.SettingsIcon(), func() { settingsAction() }),
 		widget.NewToolbarSpacer(),
 		widget.NewToolbarAction(theme.InfoIcon(), func() {
-			dialog.NewInformation("About", "LazyReview - AI Code Review\nVersion: 1.0\n© 2023 - 2025 MichalOpenmakers", mainWindow).Show()
+			dialog.NewInformation("About", "LazyReview - AI Code Review\nVersion: 1.0\n© 2025 Traq", mainWindow).Show()
 		}),
 	)
 }
