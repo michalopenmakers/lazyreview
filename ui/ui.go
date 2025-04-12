@@ -271,7 +271,8 @@ func showSettingsDialog() {
 
 	openaiModelEntry := widget.NewEntry()
 	openaiModelEntry.SetText(currentConfig.AIModelConfig.Model)
-	openaiModelEntry.PlaceHolder = "OpenAI Model (e.g. o3-mini-high)"
+	// Zmienione placeholder: z "OpenAI Model (e.g. o3-mini-high)" na "OpenAI Model (e.g. GPT-4o)"
+	openaiModelEntry.PlaceHolder = "OpenAI Model (e.g. GPT-4o)"
 
 	gitlabUrlInfo := widget.NewLabel("Enter only the GitLab domain; 'https://' and '/api/v4' will be added automatically")
 	gitlabUrlInfo.TextStyle = fyne.TextStyle{Italic: true}

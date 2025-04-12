@@ -16,7 +16,6 @@ type CompletionRequest struct {
 	Model               string    `json:"model"`
 	Messages            []Message `json:"messages"`
 	MaxCompletionTokens int       `json:"max_completion_tokens"`
-	Temperature         float64   `json:"temperature"`
 }
 
 type Message struct {
@@ -64,7 +63,6 @@ func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (stri
 				Model:               cfg.AIModelConfig.Model,
 				Messages:            messages,
 				MaxCompletionTokens: cfg.AIModelConfig.MaxTokens,
-				Temperature:         0.5,
 			})
 			if err != nil {
 				logger.Log(fmt.Sprintf("Error marshaling request: %v", err))
@@ -119,7 +117,6 @@ func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (stri
 			Model:               cfg.AIModelConfig.Model,
 			Messages:            messages,
 			MaxCompletionTokens: cfg.AIModelConfig.MaxTokens,
-			Temperature:         0.5,
 		})
 		if err != nil {
 			logger.Log(fmt.Sprintf("Error marshaling request: %v", err))
