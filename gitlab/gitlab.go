@@ -267,46 +267,40 @@ func GetCurrentCommit(cfg *config.Config, projectID string, mrID int) (string, e
 	return "", fmt.Errorf("no commits found for merge request")
 }
 
-func AcceptMergeRequest(cfg *config.Config, projectID string, mrID int, reviewMessage string) error {
+func AcceptMergeRequestReview(cfg *config.Config, projectID string, mrID int, reviewText string) error {
+	logger.Log(fmt.Sprintf("Accepting review for MR #%d in project %s", mrID, projectID))
 	apiUrl := cfg.GitLabConfig.GetFullApiUrl()
-	url := fmt.Sprintf("%s/projects/%s/merge_requests/%d/notes", apiUrl, projectID, mrID)
-
+	discussionUrl := fmt.Sprintf("%s/projects/%s/merge_requests/%d/discussions", apiUrl, projectID, mrID)
+	// Scalony komunikat – zawiera informację o rozpoczęciu oraz końcowy komentarz recenzji
+	combinedMessage := "Rozpoczynam recenzję.\n\nReview accepted: chore: add comment to EC2 example configuration\n" + reviewText
 	payload := map[string]string{
-		"body": reviewMessage,
+		"body": combinedMessage,
 	}
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
-		logger.Log(fmt.Sprintf("Error marshaling accept review payload: %v", err))
+		logger.Log(fmt.Sprintf("Error marshaling review payload: %v", err))
 		return err
 	}
-
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+	req, err := http.NewRequest("POST", discussionUrl, bytes.NewBuffer(jsonPayload))
 	if err != nil {
-		logger.Log(fmt.Sprintf("Error creating request for accepting review: %v", err))
+		logger.Log(fmt.Sprintf("Error creating request for review: %v", err))
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("PRIVATE-TOKEN", cfg.GitLabConfig.ApiToken)
-
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Log(fmt.Sprintf("Error sending accept review request: %v", err))
+		logger.Log(fmt.Sprintf("Error sending review request: %v", err))
 		return err
 	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
-		}
-	}(resp.Body)
-
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		errMsg := fmt.Sprintf("GitLab API responded with status code %d on accept review: %s", resp.StatusCode, string(body))
+		errMsg := fmt.Sprintf("GitLab API responded with status code %d on review: %s", resp.StatusCode, string(body))
 		logger.Log(errMsg)
 		return fmt.Errorf(errMsg)
 	}
-	logger.Log(fmt.Sprintf("Successfully accepted review for MR #%d in project %s", mrID, projectID))
+	logger.Log(fmt.Sprintf("Successfully accepted review for MR #%d", mrID))
 	return nil
 }

@@ -299,9 +299,8 @@ func AcceptReview(reviewID string) {
 			logger.Log(fmt.Sprintf("Review accepted: %s", r.Title))
 			if r.Source == "gitlab" {
 				cfg := config.LoadConfig()
-				reviewMessage := "Review accepted: chore: add comment to EC2 example configuration\n" + r.ReviewText
-				err := gitlab.AcceptMergeRequest(cfg, r.ProjectID, r.MergeReqID, reviewMessage)
-				if err != nil {
+				// Zamiast dwóch osobnych wywołań, wykonujemy jedno scalone wywołanie
+				if err := gitlab.AcceptMergeRequestReview(cfg, r.ProjectID, r.MergeReqID, r.ReviewText); err != nil {
 					logger.Log(fmt.Sprintf("Error accepting review in GitLab: %v", err))
 				}
 			} else if r.Source == "github" {
