@@ -136,7 +136,7 @@ func StartUI() {
 
 		for _, log := range logs {
 			segment := &widget.TextSegment{
-				Text: " " + log + "\n\n",
+				Text: " " + log,
 				Style: widget.RichTextStyle{
 					ColorName: theme.ColorNameForeground,
 				},
