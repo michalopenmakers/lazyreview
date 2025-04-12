@@ -267,7 +267,6 @@ func GetCurrentCommit(cfg *config.Config, projectID string, mrID int) (string, e
 	return "", fmt.Errorf("no commits found for merge request")
 }
 
-// Dodaj poniższą funkcję do akceptowania recenzji w GitLab poprzez dodanie komentarza
 func AcceptMergeRequest(cfg *config.Config, projectID string, mrID int, reviewMessage string) error {
 	apiUrl := cfg.GitLabConfig.GetFullApiUrl()
 	url := fmt.Sprintf("%s/projects/%s/merge_requests/%d/notes", apiUrl, projectID, mrID)
