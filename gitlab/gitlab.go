@@ -84,11 +84,6 @@ func GetMergeRequestChanges(cfg *config.Config, projectID string, mrID int) (str
 	return combinedDiff, nil
 }
 
-func GetProjectCode(projectID string) (string, error) {
-	logger.Log(fmt.Sprintf("Getting entire code for project %s", projectID))
-	return fmt.Sprintf("Project code for project ID %s is too large to include directly. Review will focus on changes only.", projectID), nil
-}
-
 func GetMergeRequestsToReview(cfg *config.Config) ([]MergeRequest, error) {
 	logger.Log("Fetching GitLab merge requests assigned for review")
 
@@ -138,75 +133,6 @@ func GetMergeRequestsToReview(cfg *config.Config) ([]MergeRequest, error) {
 
 	logger.Log(fmt.Sprintf("Successfully fetched %d merge requests for review", len(mergeRequests)))
 	return mergeRequests, nil
-}
-
-func GetChangesBetweenCommits(cfg *config.Config, projectID, oldCommit, newCommit string) (string, error) {
-	logger.Log(fmt.Sprintf("Getting changes between commits %s and %s for project %s", oldCommit, newCommit, projectID))
-
-	if oldCommit == "" {
-		return GetProjectCode(projectID)
-	}
-
-	apiUrl := cfg.GitLabConfig.GetFullApiUrl()
-	url := fmt.Sprintf("%s/projects/%s/repository/compare?from=%s&to=%s", apiUrl, projectID, oldCommit, newCommit)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		logger.Log(fmt.Sprintf("Error creating request for GitLab diff: %v", err))
-		return "", err
-	}
-
-	req.Header.Set("PRIVATE-TOKEN", cfg.GitLabConfig.ApiToken)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Log(fmt.Sprintf("Error connecting to GitLab API (%s): %v", apiUrl, err))
-		return "", err
-	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
-		}
-	}(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		errMsg := fmt.Sprintf("GitLab API responded with status code %d: %s", resp.StatusCode, string(body))
-		logger.Log(errMsg)
-		return "", fmt.Errorf(errMsg)
-	}
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.Log(fmt.Sprintf("Error reading API response: %v", err))
-		return "", err
-	}
-	logger.Log("API response: " + string(bodyBytes))
-
-	var compareResult struct {
-		Diffs []struct {
-			Diff        string `json:"diff"`
-			OldPath     string `json:"old_path"`
-			NewPath     string `json:"new_path"`
-			RenamedFile bool   `json:"renamed_file"`
-		} `json:"diffs"`
-	}
-
-	if err := json.Unmarshal(bodyBytes, &compareResult); err != nil {
-		logger.Log(fmt.Sprintf("Error decoding GitLab compare response: %v", err))
-		return "", err
-	}
-
-	var combinedDiff string
-	for _, diff := range compareResult.Diffs {
-		fileHeader := fmt.Sprintf("--- %s\n+++ %s\n", diff.OldPath, diff.NewPath)
-		combinedDiff += fileHeader + diff.Diff + "\n\n"
-	}
-
-	logger.Log(fmt.Sprintf("Successfully fetched changes between commits, total size: %d bytes", len(combinedDiff)))
-	return combinedDiff, nil
 }
 
 func GetCurrentCommit(cfg *config.Config, projectID string, mrID int) (string, error) {

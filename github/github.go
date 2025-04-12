@@ -120,7 +120,12 @@ func GetPullRequestChanges(cfg *config.Config, repository string, prID int) (str
 		logger.Log(fmt.Sprintf("Error connecting to GitHub API (%s): %v", apiUrl, err))
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -158,100 +163,6 @@ func GetPullRequestChanges(cfg *config.Config, repository string, prID int) (str
 	return combinedChanges, nil
 }
 
-func GetRepositoryCode(cfg *config.Config, repository string) (string, error) {
-	logger.Log(fmt.Sprintf("Getting entire code for repository %s", repository))
-
-	apiUrl := getFullApiUrl(cfg)
-	url := fmt.Sprintf("%s/repos/%s/zipball", apiUrl, repository)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		logger.Log(fmt.Sprintf("Error creating request for GitHub repo code: %v", err))
-		return "", err
-	}
-
-	req.Header.Set("Authorization", "token "+cfg.GitHubConfig.ApiToken)
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Log(fmt.Sprintf("Error connecting to GitHub API (%s): %v", apiUrl, err))
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		errMsg := fmt.Sprintf("GitHub API responded with status code %d: %s", resp.StatusCode, string(body))
-		logger.Log(errMsg)
-		return "", fmt.Errorf(errMsg)
-	}
-
-	logger.Log(fmt.Sprintf("Successfully fetched repository code for %s", repository))
-	return fmt.Sprintf("Repository code for %s is too large to include directly. This is a placeholder for the actual downloaded code.", repository), nil
-}
-
-func GetChangesBetweenCommits(cfg *config.Config, repo, oldCommit, newCommit string) (string, error) {
-	logger.Log(fmt.Sprintf("Getting changes between commits %s and %s for repo %s", oldCommit, newCommit, repo))
-	if oldCommit == "" {
-		return GetRepositoryCode(cfg, repo)
-	}
-
-	apiUrl := getFullApiUrl(cfg)
-	url := fmt.Sprintf("%s/repos/%s/compare/%s...%s", apiUrl, repo, oldCommit, newCommit)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		logger.Log(fmt.Sprintf("Error creating request for GitHub compare: %v", err))
-		return "", err
-	}
-	req.Header.Set("Authorization", "token "+cfg.GitHubConfig.ApiToken)
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Log(fmt.Sprintf("Error connecting to GitHub API (%s): %v", apiUrl, err))
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		errMsg := fmt.Sprintf("GitHub API responded with status code %d: %s", resp.StatusCode, string(body))
-		logger.Log(errMsg)
-		return "", fmt.Errorf(errMsg)
-	}
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.Log(fmt.Sprintf("Error reading API response: %v", err))
-		return "", err
-	}
-	logger.Log("API response: " + string(bodyBytes))
-
-	var compareResult struct {
-		Files []struct {
-			Filename string `json:"filename"`
-			Patch    string `json:"patch"`
-		} `json:"files"`
-	}
-
-	if err := json.Unmarshal(bodyBytes, &compareResult); err != nil {
-		logger.Log(fmt.Sprintf("Error decoding GitHub compare response: %v", err))
-		return "", err
-	}
-
-	var combinedDiff string
-	for _, file := range compareResult.Files {
-		fileHeader := fmt.Sprintf("--- a/%s\n+++ b/%s\n", file.Filename, file.Filename)
-		combinedDiff += fileHeader + file.Patch + "\n\n"
-	}
-
-	logger.Log(fmt.Sprintf("Successfully fetched changes between commits, total size: %d bytes", len(combinedDiff)))
-	return combinedDiff, nil
-}
-
 func GetCurrentCommit(cfg *config.Config, repo string, prID int) (string, error) {
 	logger.Log(fmt.Sprintf("Getting current commit for PR #%d in repo %s", prID, repo))
 
@@ -273,7 +184,12 @@ func GetCurrentCommit(cfg *config.Config, repo string, prID int) (string, error)
 		logger.Log(fmt.Sprintf("Error connecting to GitHub API (%s): %v", apiUrl, err))
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -335,7 +251,12 @@ func AcceptPullRequest(cfg *config.Config, repository string, prNumber int, revi
 		logger.Log(fmt.Sprintf("Error sending accept review request to GitHub: %v", err))
 		return err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
