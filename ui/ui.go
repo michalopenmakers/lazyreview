@@ -27,19 +27,16 @@ import (
 //go:embed icon.png
 var iconPng []byte
 
-// Dodajemy globalne zmienne do przechowywania scroll containera oraz flagi edycji
 var (
 	currentConfig      *config.Config
 	mainWindow         fyne.Window
 	mainApp            fyne.App
 	statusInfo         *widget.Label
 	currentReviewIndex = -1
-
-	selectedReview *review.CodeReview
-	acceptButton   *widget.Button
-
-	reviewsListScroll *container.Scroll         // nowy globalny wskaźnik do scroll containera
-	isEditing         bool              = false // globalna flaga edycji
+	selectedReview     *review.CodeReview
+	acceptButton       *widget.Button
+	reviewsListScroll  *container.Scroll
+	isEditing          bool = false
 )
 
 type whiteDisabledTextTheme struct {
@@ -54,7 +51,6 @@ func (w whiteDisabledTextTheme) Color(name fyne.ThemeColorName, variant fyne.The
 }
 
 func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry) {
-	// Zapamiętaj aktualny offset scrollowania
 	offset := reviewsListScroll.Offset
 
 	reviews := business.GetReviews()
@@ -71,7 +67,6 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 		currentReviewIndex = -1
 		selectedReview = nil
 	} else {
-		// Zmiana: iterujemy po indeksach, aby uzyskać wskaźnik do oryginalnego elementu
 		for i := range reviews {
 			currentReview := &reviews[i]
 			btnSelect := widget.NewButton(currentReview.Title, func() {
@@ -97,7 +92,6 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 			row := container.NewHBox(btnSelect)
 			reviewsList.Add(row)
 
-			// Ustawienie pierwszej recenzji, jeśli jeszcze nie ustawiono
 			if i == 0 && (currentReviewIndex < 0 || currentReviewIndex >= len(reviews)) {
 				currentReviewIndex = 0
 				selectedReview = currentReview
@@ -121,11 +115,9 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 	}
 
 	reviewsList.Refresh()
-	// Przywracamy offset scrollowania
 	reviewsListScroll.Offset = offset
 	reviewsListScroll.Refresh()
 
-	// Dodajemy automatyczną aktualizację szczegółów wybranej recenzji tylko gdy nie edytujemy
 	if selectedReview != nil && reviewDetails != nil && !isEditing {
 		for i := range reviews {
 			if reviews[i].ID == selectedReview.ID {
@@ -171,7 +163,6 @@ func StartUI() {
 
 	reviewsListContainer := container.NewVBox()
 	scrollContainer := container.NewScroll(reviewsListContainer)
-	// Przypisanie scrollContainer do globalnej zmiennej, aby zachować offset przy odświeżaniu
 	reviewsListScroll = scrollContainer
 
 	split := container.NewHSplit(
@@ -282,7 +273,6 @@ func buildDetailsSection(reviewDetails *widget.Entry) fyne.CanvasObject {
 	acceptButton.Disable()
 	acceptButton.Hide()
 
-	// Aktualizacja przycisku Edit/Save, aby zapisywał zmodyfikowany tekst recenzji
 	var editButton *widget.Button
 	editButton = widget.NewButton("Edit", func() {
 		if !isEditing {
