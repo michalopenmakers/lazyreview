@@ -312,9 +312,7 @@ func checkGitHubPullRequests(cfg *config.Config) {
 			state.UpdateGitHubRepoState(pr.Repository, currentCommit, time.Now().Unix())
 			logger.Log(fmt.Sprintf("Added new review for PR #%d in %s", pr.Number, pr.Repository))
 		} else {
-			if !exists {
-				reviewsMutex.Unlock()
-			}
+			reviewsMutex.Unlock()
 		}
 	}
 }
