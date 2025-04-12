@@ -290,7 +290,6 @@ func showSettingsDialog() {
 
 	openaiModelEntry := widget.NewEntry()
 	openaiModelEntry.SetText(currentConfig.AIModelConfig.Model)
-	// Zmienione placeholder: z "OpenAI Model (e.g. o3-mini-high)" na "OpenAI Model (e.g. GPT-4o)"
 	openaiModelEntry.PlaceHolder = "OpenAI Model (e.g. GPT-4o)"
 
 	gitlabUrlInfo := widget.NewLabel("Enter only the GitLab domain; 'https://' and '/api/v4' will be added automatically")
@@ -350,7 +349,7 @@ func showSettingsDialog() {
 }
 
 func lightenColor(c color.Color, factor float64) color.Color {
-	r, g, b, a := c.RGBA() // wartości 16-bitowe
+	r, g, b, a := c.RGBA()
 	r8 := uint8(r >> 8)
 	g8 := uint8(g >> 8)
 	b8 := uint8(b >> 8)
