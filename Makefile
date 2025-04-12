@@ -1,18 +1,19 @@
-.PHONY: build run clean
-
+.PHONY: build run clean macapp
 
 BINARY=lazyreview
+APP_NAME=LazyReview
 
-all: clean build run
+all: clean build macapp
 
 build:
-	@echo "Kompilacja aplikacji..."
 	go build -o $(BINARY) .
 
 run: build
-	@echo "Uruchamianie aplikacji..."
 	./$(BINARY)
 
 clean:
-	@echo "Czyszczenie builda..."
 	rm -f $(BINARY)
+	rm -rf $(APP_NAME).app
+
+macapp:
+	fyne package -os darwin -name $(APP_NAME) -icon ui/icon.png

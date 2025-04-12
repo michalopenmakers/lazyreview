@@ -1,7 +1,13 @@
 package ui
 
 import (
+	_ "embed"
 	"fmt"
+	"image/color"
+	"strconv"
+	"strings"
+	"time"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
@@ -10,165 +16,211 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"runtime"
-	"strconv"
-	"time"
 
 	"github.com/michalopenmakers/lazyreview/business"
 	"github.com/michalopenmakers/lazyreview/config"
+	"github.com/michalopenmakers/lazyreview/logger"
 	"github.com/michalopenmakers/lazyreview/notifications"
-	"github.com/michalopenmakers/lazyreview/review"
 )
 
-type ReviewListItem struct {
-	review review.CodeReview
-	item   *fyne.Container
-}
+//go:embed icon.png
+var iconPng []byte
 
 var currentConfig *config.Config
 var mainWindow fyne.Window
 var mainApp fyne.App
+var statusInfo *widget.Label
+var currentReviewIndex = -1
+
+func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry) {
+	reviews := business.GetReviews()
+	reviewsList.RemoveAll()
+
+	if len(reviews) == 0 {
+		emptyLabel := widget.NewLabel("No reviews available")
+		emptyLabel.Alignment = fyne.TextAlignCenter
+		reviewsList.Add(emptyLabel)
+
+		if reviewDetails != nil {
+			reviewDetails.SetText("")
+		}
+		currentReviewIndex = -1
+	} else {
+		for i, review := range reviews {
+			reviewIndex := i
+			reviewButton := widget.NewButton(review.Title, func() {
+				if reviewDetails != nil {
+					reviewDetails.SetText(review.ReviewText)
+					currentReviewIndex = reviewIndex
+					setStatus(fmt.Sprintf("Showing review: %s", review.Title))
+				}
+			})
+			reviewsList.Add(reviewButton)
+		}
+
+		if currentReviewIndex >= 0 && currentReviewIndex < len(reviews) {
+			if reviewDetails != nil {
+				reviewDetails.SetText(reviews[currentReviewIndex].ReviewText)
+			}
+		} else if reviewDetails != nil && len(reviews) > 0 {
+			currentReviewIndex = 0
+			reviewDetails.SetText(reviews[0].ReviewText)
+		}
+	}
+
+	reviewsList.Refresh()
+}
+
+func setStatus(text string) {
+	if statusInfo != nil {
+		statusInfo.SetText(text)
+	}
+}
+
+var updateLogs func()
 
 func StartUI() {
-	a := app.NewWithID("com.michalopenmakers.lazyreview")
-	mainApp = a
+	mainApp = app.New()
+	mainWindow = mainApp.NewWindow("LazyReview")
+	mainWindow.Resize(fyne.NewSize(1920, 1080))
+	mainWindow.CenterOnScreen()
 
-	// Ustawienie właściwości aplikacji dla macOS
-	if runtime.GOOS == "darwin" {
-		a.SetIcon(resourceAppIconPng())
-	}
-
-	w := a.NewWindow("LazyReview")
-	w.Resize(fyne.NewSize(800, 600))
-	mainWindow = w
-
-	// Rejestrujemy funkcję przywracania okna, która będzie wywoływana po kliknięciu w powiadomienie
-	notifications.RegisterShowWindowCallback(func() {
-		if mainWindow != nil {
-			if runtime.GOOS == "darwin" {
-				mainWindow.Show()
-				mainWindow.RequestFocus()
-
-				// Usunięto wysyłanie dodatkowego powiadomienia, aby przerwać pętlę aktywacji
-				go func() {
-					time.Sleep(200 * time.Millisecond)
-					// Druga próba po krótkim opóźnieniu
-					time.Sleep(300 * time.Millisecond)
-					mainWindow.Show()
-					mainWindow.RequestFocus()
-					if desk, ok := mainApp.(desktop.App); ok {
-						desk.SetSystemTrayIcon(resourceAppIconPng())
-					}
-				}()
-			} else {
-				mainWindow.Show()
-				mainWindow.RequestFocus()
-			}
-		}
-	})
-
-	// Okno nie zamyka się całkowicie przy kliknięciu "X", tylko się ukrywa
-	w.SetCloseIntercept(func() {
-		notifications.SendNotification("Application minimized to system tray")
-		w.Hide()
-	})
-
-	// Tworzymy menu systemowe
-	if desk, ok := a.(desktop.App); ok {
-		systrayMenu := fyne.NewMenu("LazyReview",
-			fyne.NewMenuItem("Show", func() {
-				mainWindow.Show()
-				mainWindow.RequestFocus()
-			}),
-			fyne.NewMenuItem("Exit", func() {
-				a.Quit()
-			}),
-		)
-		desk.SetSystemTrayMenu(systrayMenu)
-
-		// Ustawiamy ikonę w tacce systemowej
-		if runtime.GOOS == "darwin" {
-			desk.SetSystemTrayIcon(resourceAppIconPng())
-		} else {
-			desk.SetSystemTrayIcon(theme.InfoIcon())
-		}
-	}
-
+	setupSystemTray()
 	currentConfig = config.LoadConfig()
 
-	title := widget.NewLabel("LazyReview - AI Code Review")
-	title.TextStyle = fyne.TextStyle{Bold: true}
-
-	settingsButton := widget.NewButtonWithIcon("Settings", theme.SettingsIcon(), showSettingsDialog)
-	header := container.NewBorder(nil, nil, nil, settingsButton, title)
-
-	reviewsList := container.NewVBox()
-	scrollContainer := container.NewScroll(reviewsList)
 	reviewDetails := widget.NewMultiLineEntry()
 	reviewDetails.Disable()
 
+	reviewsListContainer := container.NewVBox()
+	scrollContainer := container.NewScroll(reviewsListContainer)
 	split := container.NewHSplit(
 		scrollContainer,
-		container.NewVBox(
-			widget.NewLabel("Review details:"),
-			reviewDetails,
-		),
+		buildDetailsSection(reviewDetails),
 	)
 	split.Offset = 0.3
 
-	content := container.NewVBox(
-		header,
-		widget.NewSeparator(),
-		split,
+	toolbar := buildToolbar(func() {
+		updateReviewsList(reviewsListContainer, reviewDetails)
+		setStatus("Review list refreshed.")
+	}, showSettingsDialog)
+
+	statusInfo = widget.NewLabel("")
+
+	logsDisplay := widget.NewRichText()
+
+	copyLogsButton := widget.NewButtonWithIcon("Copy logs", theme.ContentCopyIcon(), func() {
+		logs := logger.GetLogs()
+		formattedLogs := make([]string, len(logs))
+		for i, log := range logs {
+			formattedLogs[i] = " " + log
+		}
+		mainWindow.Clipboard().SetContent(strings.Join(formattedLogs, "\n"))
+		setStatus("Logs copied to clipboard.")
+	})
+
+	updateLogs = func() {
+		logs := logger.GetLogs()
+		baseColor := theme.Color("text")
+		lighterColor := lightenColor(baseColor, 0.5)
+		hexColor := colorToHex(lighterColor)
+
+		var markupLogs strings.Builder
+		for _, log := range logs {
+			markupLogs.WriteString(fmt.Sprintf("<span style='font-family:monospace; color:%s;'> %s</span>\n\n", hexColor, log))
+		}
+		newRich := widget.NewRichTextFromMarkdown(markupLogs.String())
+		logsDisplay.Segments = newRich.Segments
+		logsDisplay.Refresh()
+	}
+
+	logsScrollContainer := container.NewScroll(logsDisplay)
+	logsScrollContainer.SetMinSize(fyne.NewSize(0, 150))
+
+	logsContainer := container.NewVBox(
+		container.NewBorder(nil, nil, nil, copyLogsButton, widget.NewLabel("Logs:")),
+		logsScrollContainer,
 	)
 
-	w.SetContent(content)
+	bottomContainer := container.NewVBox(
+		container.New(layout.NewHBoxLayout(), statusInfo),
+		widget.NewSeparator(),
+		logsContainer,
+	)
+
+	content := container.NewBorder(
+		toolbar,
+		bottomContainer,
+		nil,
+		nil,
+		split,
+	)
+	mainWindow.SetContent(content)
+
+	mainWindow.SetCloseIntercept(func() {
+		hideWindow()
+	})
 
 	go func() {
 		for {
 			time.Sleep(5 * time.Second)
-			updateReviewsList(reviewsList, reviewDetails)
+			updateReviewsList(reviewsListContainer, reviewDetails)
+			updateLogs()
 		}
 	}()
-	updateReviewsList(reviewsList, reviewDetails)
+	updateReviewsList(reviewsListContainer, reviewDetails)
+	updateLogs()
 
-	w.ShowAndRun()
+	mainWindow.ShowAndRun()
 }
 
-// ShowMainWindow przywraca główne okno aplikacji
-func ShowMainWindow() {
-	if mainWindow != nil {
-		if runtime.GOOS == "darwin" {
-			// Bardziej rozbudowane podejście do przywracania okna na macOS
-			// Pierwsza próba
-			mainWindow.Show()
-			mainWindow.RequestFocus()
+func buildToolbar(refreshAction func(), settingsAction func()) *widget.Toolbar {
+	title := widget.NewLabel("LazyReview - AI Code Review")
+	title.TextStyle = fyne.TextStyle{Bold: true}
+	return widget.NewToolbar(
+		widget.NewToolbarAction(theme.ViewRefreshIcon(), func() { refreshAction() }),
+		widget.NewToolbarSeparator(),
+		widget.NewToolbarAction(theme.SettingsIcon(), func() { settingsAction() }),
+		widget.NewToolbarSpacer(),
+		widget.NewToolbarAction(theme.InfoIcon(), func() {
+			dialog.NewInformation("About", "LazyReview - AI Code Review\nVersion: 1.0\n© 2023 - 2025 MichalOpenmakers", mainWindow).Show()
+		}),
+	)
+}
 
-			// Dodatkowe działania w osobnej goroutinie
-			go func() {
-				// Dodatkowe opóźnienie
-				time.Sleep(200 * time.Millisecond)
+func buildDetailsSection(reviewDetails *widget.Entry) fyne.CanvasObject {
+	detailsLabel := widget.NewLabel("Review Details:")
+	detailsLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-				// Druga próba
-				mainWindow.Show()
-				mainWindow.RequestFocus()
+	return container.NewVBox(
+		detailsLabel,
+		widget.NewSeparator(),
+		reviewDetails,
+	)
+}
 
-				if mainApp != nil {
-					mainApp.SendNotification(&fyne.Notification{
-						Title:   "LazyReview",
-						Content: "Application activated",
-					})
-
-					if desk, ok := mainApp.(desktop.App); ok {
-						desk.SetSystemTrayIcon(theme.InfoIcon())
-					}
-				}
-			}()
-		} else {
-			mainWindow.Show()
-			mainWindow.RequestFocus()
-		}
+func setupSystemTray() {
+	if desk, ok := mainApp.(desktop.App); ok {
+		showItem := fyne.NewMenuItem("Show", showWindow)
+		hideItem := fyne.NewMenuItem("Hide", hideWindow)
+		settingsItem := fyne.NewMenuItem("Settings", showSettingsDialog)
+		quitItem := fyne.NewMenuItem("Quit", func() { mainApp.Quit() })
+		menu := fyne.NewMenu("LazyReview", showItem, hideItem, fyne.NewMenuItemSeparator(), settingsItem, fyne.NewMenuItemSeparator(), quitItem)
+		desk.SetSystemTrayMenu(menu)
+		res := fyne.NewStaticResource("icon.png", iconPng)
+		desk.SetSystemTrayIcon(res)
 	}
+}
+
+func showWindow() {
+	mainWindow.Show()
+	mainWindow.RequestFocus()
+	setStatus("Window restored.")
+}
+
+func hideWindow() {
+	mainWindow.Hide()
+	notifications.SendNotification("LazyReview is running in the background.")
+	setStatus("Window hidden, application running in the background.")
 }
 
 func showSettingsDialog() {
@@ -179,7 +231,7 @@ func showSettingsDialog() {
 
 	gitlabUrlEntry := widget.NewEntry()
 	gitlabUrlEntry.SetText(currentConfig.GitLabConfig.ApiUrl)
-	gitlabUrlEntry.PlaceHolder = "https://gitlab.com/api/v4"
+	gitlabUrlEntry.PlaceHolder = "e.g. gitlab.com or gitlab.hlag.altemista.cloud"
 
 	gitlabTokenEntry := widget.NewPasswordEntry()
 	gitlabTokenEntry.SetText(currentConfig.GitLabConfig.ApiToken)
@@ -190,13 +242,18 @@ func showSettingsDialog() {
 	})
 	githubEnabledCheck.Checked = currentConfig.GitHubConfig.Enabled
 
-	githubUrlEntry := widget.NewEntry()
-	githubUrlEntry.SetText(currentConfig.GitHubConfig.ApiUrl)
-	githubUrlEntry.PlaceHolder = "https://api.github.com"
-
 	githubTokenEntry := widget.NewPasswordEntry()
 	githubTokenEntry.SetText(currentConfig.GitHubConfig.ApiToken)
 	githubTokenEntry.PlaceHolder = "Personal Access Token"
+
+	githubApiInfo := widget.NewLabel("GitHub API uses the standard URL: https://api.github.com")
+	githubApiInfo.TextStyle = fyne.TextStyle{Italic: true}
+	githubApiInfo.Alignment = fyne.TextAlignLeading
+
+	githubContainer := container.NewVBox(
+		githubTokenEntry,
+		githubApiInfo,
+	)
 
 	mergeRequestsIntervalEntry := widget.NewEntry()
 	mergeRequestsIntervalEntry.SetText(strconv.Itoa(currentConfig.MergeRequestsPollingInterval))
@@ -208,91 +265,82 @@ func showSettingsDialog() {
 	reviewRequestsIntervalUnit := widget.NewLabel("seconds")
 	reviewRequestsLayout := container.NewHBox(reviewRequestsIntervalEntry, reviewRequestsIntervalUnit)
 
-	aiModelSelect := widget.NewSelect([]string{"o3-mini-high", "o3-mini"}, func(selected string) {
-		currentConfig.AIModelConfig.Model = selected
-	})
-	aiModelSelect.Selected = currentConfig.AIModelConfig.Model
+	openaiTokenEntry := widget.NewPasswordEntry()
+	openaiTokenEntry.SetText(currentConfig.AIModelConfig.ApiKey)
+	openaiTokenEntry.PlaceHolder = "OpenAI API Token"
 
-	aiApiKeyEntry := widget.NewPasswordEntry()
-	aiApiKeyEntry.SetText(currentConfig.AIModelConfig.ApiKey)
-	aiApiKeyEntry.PlaceHolder = "AI API Key"
+	openaiModelEntry := widget.NewEntry()
+	openaiModelEntry.SetText(currentConfig.AIModelConfig.Model)
+	openaiModelEntry.PlaceHolder = "OpenAI Model (e.g. o3-mini-high)"
+
+	gitlabUrlInfo := widget.NewLabel("Enter only the GitLab domain; 'https://' and '/api/v4' will be added automatically")
+	gitlabUrlInfo.TextStyle = fyne.TextStyle{Italic: true}
+	gitlabUrlInfo.Alignment = fyne.TextAlignLeading
+
+	gitlabUrlContainer := container.NewVBox(
+		gitlabUrlEntry,
+		gitlabUrlInfo,
+	)
 
 	form := &widget.Form{
 		Items: []*widget.FormItem{
 			{Text: "GitLab", Widget: gitlabEnabledCheck},
-			{Text: "GitLab API URL", Widget: gitlabUrlEntry},
+			{Text: "GitLab URL", Widget: gitlabUrlContainer},
 			{Text: "GitLab Token", Widget: gitlabTokenEntry},
 			{Text: "GitHub", Widget: githubEnabledCheck},
-			{Text: "GitHub API URL", Widget: githubUrlEntry},
-			{Text: "GitHub Token", Widget: githubTokenEntry},
+			{Text: "GitHub Token", Widget: githubContainer},
+			{Text: "OpenAI API Token", Widget: openaiTokenEntry},
+			{Text: "OpenAI Model", Widget: openaiModelEntry},
 			{Text: "MR/PR polling interval", Widget: mergeRequestsLayout},
 			{Text: "Review polling interval", Widget: reviewRequestsLayout},
-			{Text: "AI Model", Widget: aiModelSelect},
-			{Text: "AI API Key", Widget: aiApiKeyEntry},
-		},
-		OnSubmit: func() {
-			currentConfig.GitLabConfig.ApiUrl = gitlabUrlEntry.Text
-			currentConfig.GitLabConfig.ApiToken = gitlabTokenEntry.Text
-			currentConfig.GitHubConfig.ApiUrl = githubUrlEntry.Text
-			currentConfig.GitHubConfig.ApiToken = githubTokenEntry.Text
-			mrInterval, err := strconv.Atoi(mergeRequestsIntervalEntry.Text)
-			if err == nil && mrInterval > 0 {
-				currentConfig.MergeRequestsPollingInterval = mrInterval
-			}
-			rrInterval, err := strconv.Atoi(reviewRequestsIntervalEntry.Text)
-			if err == nil && rrInterval > 0 {
-				currentConfig.ReviewRequestsPollingInterval = rrInterval
-			}
-			// Aktualizacja konfiguracji AI
-			currentConfig.AIModelConfig.Model = aiModelSelect.Selected
-			currentConfig.AIModelConfig.ApiKey = aiApiKeyEntry.Text
-
-			err = config.SaveConfig(currentConfig)
-			if err != nil {
-				dialog.ShowError(err, mainWindow)
-				return
-			}
-			notifications.SendNotification("Configuration saved.")
-			business.RestartMonitoring(currentConfig)
-			dialog.NewInformation("Saved", "Settings saved.", mainWindow).Show()
-		},
-		OnCancel: func() {
 		},
 	}
 
-	dialog.ShowCustom("Settings", "Save", form, mainWindow)
+	saveButton := widget.NewButton("Save", func() {
+		currentConfig.GitLabConfig.ApiUrl = gitlabUrlEntry.Text
+		currentConfig.GitLabConfig.ApiToken = gitlabTokenEntry.Text
+		currentConfig.GitHubConfig.ApiToken = githubTokenEntry.Text
+		currentConfig.AIModelConfig.ApiKey = openaiTokenEntry.Text
+		currentConfig.AIModelConfig.Model = openaiModelEntry.Text
+
+		mrInterval, err := strconv.Atoi(mergeRequestsIntervalEntry.Text)
+		if err == nil && mrInterval > 0 {
+			currentConfig.MergeRequestsPollingInterval = mrInterval
+		}
+		rrInterval, err := strconv.Atoi(reviewRequestsIntervalEntry.Text)
+		if err == nil && rrInterval > 0 {
+			currentConfig.ReviewRequestsPollingInterval = rrInterval
+		}
+		err = config.SaveConfig(currentConfig)
+		if err != nil {
+			dialog.ShowError(err, mainWindow)
+			return
+		}
+		notifications.SendNotification("Configuration saved.")
+		business.RestartMonitoring(currentConfig)
+		dialog.NewInformation("Settings saved", "Settings saved", mainWindow).Show()
+		setStatus("Settings saved.")
+	})
+
+	content := container.NewVBox(
+		form,
+		saveButton,
+	)
+	dialog.ShowCustom("Settings", "Close", content, mainWindow)
 }
 
-func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry) {
-	reviews := business.GetReviews()
-	reviewsList.Objects = nil
-	for _, r := range reviews {
-		codeReview := r
-		var statusIcon *widget.Icon
-		switch codeReview.Status {
-		case "completed":
-			statusIcon = widget.NewIcon(theme.ConfirmIcon())
-		case "error":
-			statusIcon = widget.NewIcon(theme.ErrorIcon())
-		default:
-			statusIcon = widget.NewIcon(theme.InfoIcon())
-		}
-		var titleLabel *widget.Label
-		if codeReview.Source == "gitlab" {
-			titleLabel = widget.NewLabel(fmt.Sprintf("GitLab MR #%d: %s", codeReview.MRID, codeReview.Title))
-		} else {
-			titleLabel = widget.NewLabel(fmt.Sprintf("GitHub PR #%d: %s", codeReview.PRID, codeReview.Title))
-		}
-		viewButton := widget.NewButton("Show", func() {
-			reviewDetails.SetText(codeReview.Review)
-		})
-		item := container.NewHBox(
-			statusIcon,
-			titleLabel,
-			layout.NewSpacer(),
-			viewButton,
-		)
-		reviewsList.Add(item)
-	}
-	reviewsList.Refresh()
+func lightenColor(c color.Color, factor float64) color.Color {
+	r, g, b, a := c.RGBA() // wartości 16-bitowe
+	r8 := uint8(r >> 8)
+	g8 := uint8(g >> 8)
+	b8 := uint8(b >> 8)
+	newR := uint8(float64(r8) + (255-float64(r8))*factor)
+	newG := uint8(float64(g8) + (255-float64(g8))*factor)
+	newB := uint8(float64(b8) + (255-float64(b8))*factor)
+	return &color.NRGBA{R: newR, G: newG, B: newB, A: uint8(a >> 8)}
+}
+
+func colorToHex(c color.Color) string {
+	r, g, b, _ := c.RGBA()
+	return fmt.Sprintf("#%02x%02x%02x", uint8(r>>8), uint8(g>>8), uint8(b>>8))
 }

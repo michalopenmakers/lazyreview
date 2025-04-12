@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Config struct {
@@ -22,11 +23,27 @@ type GitLabConfig struct {
 	ProjectIDs []string
 }
 
+func (g *GitLabConfig) GetFullApiUrl() string {
+	baseUrl := strings.TrimSpace(g.ApiUrl)
+	if !strings.HasPrefix(baseUrl, "http://") && !strings.HasPrefix(baseUrl, "https://") {
+		baseUrl = "https://" + baseUrl
+	}
+	baseUrl = strings.TrimSuffix(baseUrl, "/")
+	if strings.HasSuffix(baseUrl, "/api/v4") {
+		return baseUrl
+	}
+	return baseUrl + "/api/v4"
+}
+
 type GitHubConfig struct {
 	Enabled      bool
 	ApiToken     string
 	ApiUrl       string
 	Repositories []string
+}
+
+func (g *GitHubConfig) GetGitHubApiUrl() string {
+	return "https://api.github.com"
 }
 
 type AIModelConfig struct {
@@ -50,6 +67,7 @@ func LoadConfig() *Config {
 		if err == nil {
 			var cfg Config
 			if err = json.Unmarshal(file, &cfg); err == nil {
+				cfg.GitHubConfig.ApiUrl = "https://api.github.com"
 				if cfg.MergeRequestsPollingInterval == 0 && cfg.ReviewRequestsPollingInterval == 0 {
 					legacyConfig := struct {
 						PollingInterval int
@@ -71,7 +89,7 @@ func LoadConfig() *Config {
 		GitLabConfig: GitLabConfig{
 			Enabled:    true,
 			ApiToken:   "",
-			ApiUrl:     "https://gitlab.com/api/v4",
+			ApiUrl:     "https://gitlab.com",
 			ProjectIDs: []string{},
 		},
 		GitHubConfig: GitHubConfig{
@@ -91,6 +109,7 @@ func LoadConfig() *Config {
 }
 
 func SaveConfig(cfg *Config) error {
+	cfg.GitHubConfig.ApiUrl = "https://api.github.com"
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
