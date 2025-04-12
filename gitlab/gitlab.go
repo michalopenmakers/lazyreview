@@ -39,7 +39,12 @@ func GetMergeRequestChanges(cfg *config.Config, projectID string, mrID int) (str
 		logger.Log(fmt.Sprintf("Error connecting to GitLab API (%s): %v", apiUrl, err))
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -104,7 +109,12 @@ func GetMergeRequestsToReview(cfg *config.Config) ([]MergeRequest, error) {
 		logger.Log(fmt.Sprintf("Error connecting to GitLab API (%s): %v", apiUrl, err))
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -154,7 +164,12 @@ func GetChangesBetweenCommits(cfg *config.Config, projectID, oldCommit, newCommi
 		logger.Log(fmt.Sprintf("Error connecting to GitLab API (%s): %v", apiUrl, err))
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -214,7 +229,12 @@ func GetCurrentCommit(cfg *config.Config, projectID string, mrID int) (string, e
 		logger.Log(fmt.Sprintf("Error connecting to GitLab API (%s): %v", apiUrl, err))
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -275,7 +295,12 @@ func AcceptMergeRequest(cfg *config.Config, projectID string, mrID int, reviewMe
 		logger.Log(fmt.Sprintf("Error sending accept review request: %v", err))
 		return err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -298,4 +299,45 @@ func GetCurrentCommit(cfg *config.Config, repo string, prID int) (string, error)
 	}
 
 	return "", fmt.Errorf("no commits found for pull request")
+}
+
+func AcceptPullRequest(cfg *config.Config, repository string, prNumber int, reviewMessage string) error {
+	apiUrl := cfg.GitHubConfig.GetGitHubApiUrl()
+	url := fmt.Sprintf("%s/repos/%s/pulls/%d/reviews", apiUrl, repository, prNumber)
+
+	payload := map[string]string{
+		"body":  reviewMessage,
+		"event": "APPROVE",
+	}
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error marshaling accept review payload for GitHub: %v", err))
+		return err
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error creating request for accepting GitHub review: %v", err))
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "token "+cfg.GitHubConfig.ApiToken)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Log(fmt.Sprintf("Error sending accept review request to GitHub: %v", err))
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		errMsg := fmt.Sprintf("GitHub API responded with status code %d on accept review: %s", resp.StatusCode, string(body))
+		logger.Log(errMsg)
+		return fmt.Errorf(errMsg)
+	}
+	logger.Log(fmt.Sprintf("Successfully accepted review for PR #%d in repository %s", prNumber, repository))
+	return nil
 }
