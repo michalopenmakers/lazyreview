@@ -33,6 +33,9 @@ var mainApp fyne.App
 var statusInfo *widget.Label
 var currentReviewIndex = -1
 
+var selectedReview *review.CodeReview
+var acceptButton *widget.Button
+
 type whiteDisabledTextTheme struct {
 	fyne.Theme
 }
@@ -57,41 +60,77 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 			reviewDetails.SetText("")
 		}
 		currentReviewIndex = -1
+		selectedReview = nil
 	} else {
-		for _, r := range reviews {
-			currentReview := r
+		for i, r := range reviews {
+			currentReview := r // lokalna kopia
 			btnSelect := widget.NewButton(currentReview.Title, func() {
+				selectedReview = &currentReview
 				if reviewDetails != nil {
 					reviewDetails.SetText(currentReview.ReviewText)
-					setStatus(fmt.Sprintf("Showing review: %s", currentReview.Title))
 				}
+				if currentReview.ReviewText != "" {
+					if selectedReview.Accepted {
+						acceptButton.SetText("Accepted")
+						acceptButton.Disable()
+					} else {
+						acceptButton.SetText("Accept")
+						acceptButton.Enable()
+					}
+					acceptButton.Show()
+				} else {
+					acceptButton.Hide()
+				}
+				setStatus(fmt.Sprintf("Showing review: %s", currentReview.Title))
 			})
-			var btnAccept *widget.Button
-			if currentReview.Accepted {
-				btnAccept = widget.NewButton("Accepted", func() {}) // przycisk wyłączony
-				btnAccept.Disable()
-			} else {
-				btnAccept = widget.NewButton("Accept", func() {
-					review.AcceptReview(currentReview.ID)
-					setStatus(fmt.Sprintf("Review accepted: %s", currentReview.Title))
-					updateReviewsList(reviewsList, reviewDetails)
-				})
-			}
-			row := container.NewHBox(btnSelect, btnAccept)
+			row := container.NewHBox(btnSelect)
 			reviewsList.Add(row)
-		}
 
-		if currentReviewIndex >= 0 && currentReviewIndex < len(reviews) {
-			if reviewDetails != nil {
-				reviewDetails.SetText(reviews[currentReviewIndex].ReviewText)
+			if i == 0 && (currentReviewIndex < 0 || currentReviewIndex >= len(reviews)) {
+				currentReviewIndex = 0
+				selectedReview = &currentReview
+				if reviewDetails != nil {
+					reviewDetails.SetText(currentReview.ReviewText)
+				}
+				if currentReview.ReviewText != "" {
+					if selectedReview.Accepted {
+						acceptButton.SetText("Accepted")
+						acceptButton.Disable()
+					} else {
+						acceptButton.SetText("Accept")
+						acceptButton.Enable()
+					}
+					acceptButton.Show()
+				} else {
+					acceptButton.Hide()
+				}
 			}
-		} else if reviewDetails != nil && len(reviews) > 0 {
-			currentReviewIndex = 0
-			reviewDetails.SetText(reviews[0].ReviewText)
 		}
 	}
 
 	reviewsList.Refresh()
+
+	// Dodajemy automatyczną aktualizację szczegółów wybranej recenzji
+	if selectedReview != nil && reviewDetails != nil {
+		for _, r := range reviews {
+			if r.ID == selectedReview.ID {
+				reviewDetails.SetText(r.ReviewText)
+				if r.ReviewText != "" {
+					if r.Accepted {
+						acceptButton.SetText("Accepted")
+						acceptButton.Disable()
+					} else {
+						acceptButton.SetText("Accept")
+						acceptButton.Enable()
+					}
+					acceptButton.Show()
+				} else {
+					acceptButton.Hide()
+				}
+				break
+			}
+		}
+	}
 }
 
 func setStatus(text string) {
@@ -213,11 +252,30 @@ func buildToolbar(refreshAction func(), settingsAction func()) *widget.Toolbar {
 }
 
 func buildDetailsSection(reviewDetails *widget.Entry) fyne.CanvasObject {
+	acceptButton = widget.NewButton("Accept", func() {
+		if selectedReview != nil && !selectedReview.Accepted {
+			review.AcceptReview(selectedReview.ID)
+			selectedReview.Accepted = true
+			acceptButton.SetText("Accepted")
+			acceptButton.Disable()
+			setStatus(fmt.Sprintf("Review accepted: %s", selectedReview.Title))
+		}
+	})
+	acceptButton.Disable()
+	acceptButton.Hide() // domyślnie przycisk ukryty
+
 	detailsLabel := widget.NewLabel("Review Details:")
 	detailsLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-	headerContainer := container.NewVBox(
+	// Ułóż etykietę po lewej, a przycisk Accept po prawej w jednej linii
+	headerRow := container.NewHBox(
 		detailsLabel,
+		layout.NewSpacer(),
+		acceptButton,
+	)
+
+	headerContainer := container.NewVBox(
+		headerRow,
 		widget.NewSeparator(),
 	)
 
@@ -226,7 +284,7 @@ func buildDetailsSection(reviewDetails *widget.Entry) fyne.CanvasObject {
 		nil,             // bottom
 		nil,             // left
 		nil,             // right
-		reviewDetails,   // center - take up all available space
+		reviewDetails,   // center
 	)
 }
 
