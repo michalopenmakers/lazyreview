@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/michalopenmakers/lazyreview/config"
@@ -34,12 +35,15 @@ type CompletionResponse struct {
 
 func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (string, error) {
 	logger.Log("Starting CodeReview request")
+	codeChanges = preprocessDiff(codeChanges)
+
 	url := "https://api.openai.com/v1/chat/completions"
 	var promptText string
 	if isFullReview {
 		promptText = "You are an experienced developer performing a complete code analysis. This is the project's first review, so analyze the project structure, code quality, potential security issues, performance and adherence to best practices. Be specific and helpful. Provide solution examples when possible."
 	} else {
-		promptText = "You are an experienced developer performing a code review. Your task is to find potential bugs, security vulnerabilities, performance issues, and suggest improvements to the code quality. Be specific and helpful. Provide solution examples when possible."
+		// Zmieniony prompt dla review merge request
+		promptText = "You are an experienced developer performing a merge request code review. Please review the following merge request changes, analyze for bugs, security vulnerabilities, performance issues, and suggest improvements. Be specific and helpful. Provide solution examples when possible."
 	}
 	if isFullReview && len(codeChanges) > 1500 {
 		var aggregatedReview string
@@ -59,6 +63,8 @@ func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (stri
 				{Role: "user", Content: "Review the following code segment:\n\n" + segment},
 			}
 			logger.Log(fmt.Sprintf("Sending API request for segment %d of %d", idx+1, len(segments)))
+			logger.Log("System prompt sent to AI: " + segPrompt)
+			logger.Log("User prompt sent to AI: " + "Review the following code segment:\n\n" + segment)
 			requestBody, err := json.Marshal(CompletionRequest{
 				Model:               cfg.AIModelConfig.Model,
 				Messages:            messages,
@@ -103,6 +109,8 @@ func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (stri
 				logger.Log(errMsg)
 				return "", fmt.Errorf(errMsg)
 			}
+			// Dodano logowanie odpowiedzi AI dla danego segmentu
+			logger.Log(fmt.Sprintf("AI response for segment %d: %s", idx+1, response.Choices[0].Message.Content))
 			logger.Log(fmt.Sprintf("Received response for segment %d", idx+1))
 			aggregatedReview += response.Choices[0].Message.Content + "\n"
 		}
@@ -110,9 +118,11 @@ func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (stri
 	} else {
 		messages := []Message{
 			{Role: "system", Content: promptText},
-			{Role: "user", Content: "Perform a code review for the following changes:\n\n" + codeChanges},
+			{Role: "user", Content: "Please review the following merge request code diff and provide actionable feedback:\n\n" + codeChanges},
 		}
-		logger.Log("Sending API request for full review or changes")
+		logger.Log("Sending API request for merge request review")
+		logger.Log("System prompt sent to AI: " + promptText)
+		logger.Log("User prompt sent to AI: " + "Please review the following merge request code diff and provide actionable feedback:\n\n" + codeChanges)
 		requestBody, err := json.Marshal(CompletionRequest{
 			Model:               cfg.AIModelConfig.Model,
 			Messages:            messages,
@@ -157,7 +167,26 @@ func CodeReview(cfg *config.Config, codeChanges string, isFullReview bool) (stri
 			logger.Log(errMsg)
 			return "", fmt.Errorf(errMsg)
 		}
+		// Dodano logowanie odpowiedzi AI dla merge request review
+		logger.Log("AI response: " + response.Choices[0].Message.Content)
 		logger.Log("Received API response for code review")
 		return response.Choices[0].Message.Content, nil
 	}
+}
+
+// Dodana funkcja pomocnicza do przetwarzania danych diff
+func preprocessDiff(diff string) string {
+	lines := strings.Split(diff, "\n")
+	var filtered []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return strings.Join(filtered, "\n")
 }

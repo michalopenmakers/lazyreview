@@ -73,7 +73,7 @@ func monitorMergeRequests(cfg *config.Config) {
 							logger.Log(fmt.Sprintf("New commit detected for MR #%d, generating review", mr.IID))
 							reviews[i].IsInProgress = true
 							reviewsMutex.Unlock()
-							changes, err := gitlab.GetChangesBetweenCommits(cfg, projectID, review.LastCommit, currentCommit)
+							changes, err := gitlab.GetMergeRequestChanges(cfg, projectID, mr.IID)
 							if err != nil {
 								logger.Log(fmt.Sprintf("Error getting changes: %v", err))
 								markReviewNotInProgress(review.ID)
@@ -106,12 +106,7 @@ func monitorMergeRequests(cfg *config.Config) {
 						reviewsMutex.Unlock()
 						continue
 					}
-					var changes string
-					if state.IsFirstGitLabReview(projectID) {
-						changes, err = gitlab.GetProjectCode(projectID)
-					} else {
-						changes, err = gitlab.GetMergeRequestChanges(cfg, projectID, mr.IID)
-					}
+					changes, err := gitlab.GetMergeRequestChanges(cfg, projectID, mr.IID)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error getting initial changes: %v", err))
 						reviewsMutex.Unlock()
@@ -130,7 +125,7 @@ func monitorMergeRequests(cfg *config.Config) {
 					}
 					reviews = append(reviews, newReview)
 					reviewsMutex.Unlock()
-					reviewText, err := openai.CodeReview(cfg, changes, state.IsFirstGitLabReview(projectID))
+					reviewText, err := openai.CodeReview(cfg, changes, false)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error generating review: %v", err))
 						markReviewNotInProgress(newReview.ID)
@@ -196,7 +191,7 @@ func monitorReviewRequests(cfg *config.Config) {
 							logger.Log(fmt.Sprintf("New commit detected for PR #%d in %s, generating review", pr.Number, pr.Repository))
 							reviews[i].IsInProgress = true
 							reviewsMutex.Unlock()
-							changes, err := github.GetChangesBetweenCommits(cfg, pr.Repository, review.LastCommit, currentCommit)
+							changes, err := github.GetPullRequestChanges(cfg, pr.Repository, pr.Number)
 							if err != nil {
 								logger.Log(fmt.Sprintf("Error getting changes: %v", err))
 								markReviewNotInProgress(review.ID)
@@ -229,12 +224,7 @@ func monitorReviewRequests(cfg *config.Config) {
 						reviewsMutex.Unlock()
 						continue
 					}
-					var changes string
-					if state.IsFirstGitHubReview(pr.Repository) {
-						changes, err = github.GetRepositoryCode(cfg, pr.Repository)
-					} else {
-						changes, err = github.GetPullRequestChanges(cfg, pr.Repository, pr.Number)
-					}
+					changes, err := github.GetPullRequestChanges(cfg, pr.Repository, pr.Number)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error getting initial changes: %v", err))
 						reviewsMutex.Unlock()
@@ -253,7 +243,7 @@ func monitorReviewRequests(cfg *config.Config) {
 					}
 					reviews = append(reviews, newReview)
 					reviewsMutex.Unlock()
-					reviewText, err := openai.CodeReview(cfg, changes, state.IsFirstGitHubReview(pr.Repository))
+					reviewText, err := openai.CodeReview(cfg, changes, false)
 					if err != nil {
 						logger.Log(fmt.Sprintf("Error generating review: %v", err))
 						markReviewNotInProgress(newReview.ID)

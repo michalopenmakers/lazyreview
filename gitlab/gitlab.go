@@ -294,7 +294,12 @@ func AcceptMergeRequestReview(cfg *config.Config, projectID string, mrID int, re
 		logger.Log(fmt.Sprintf("Error sending review request: %v", err))
 		return err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		errMsg := fmt.Sprintf("GitLab API responded with status code %d on review: %s", resp.StatusCode, string(body))
