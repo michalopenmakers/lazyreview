@@ -44,7 +44,12 @@ func GetPullRequestsToReview(cfg *config.Config) ([]PullRequest, error) {
 		logger.Log(fmt.Sprintf("Error connecting to GitHub API (%s): %v", apiUrl, err))
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			logger.Log(fmt.Sprintf("Error closing response body: %v", err))
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

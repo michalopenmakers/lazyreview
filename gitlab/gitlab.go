@@ -271,10 +271,8 @@ func AcceptMergeRequestReview(cfg *config.Config, projectID string, mrID int, re
 	logger.Log(fmt.Sprintf("Accepting review for MR #%d in project %s", mrID, projectID))
 	apiUrl := cfg.GitLabConfig.GetFullApiUrl()
 	discussionUrl := fmt.Sprintf("%s/projects/%s/merge_requests/%d/discussions", apiUrl, projectID, mrID)
-	// Scalony komunikat – zawiera informację o rozpoczęciu oraz końcowy komentarz recenzji
-	combinedMessage := "Rozpoczynam recenzję.\n\nReview accepted: chore: add comment to EC2 example configuration\n" + reviewText
 	payload := map[string]string{
-		"body": combinedMessage,
+		"body": reviewText,
 	}
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
