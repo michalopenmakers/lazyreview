@@ -20,12 +20,14 @@ import (
 	"github.com/michalopenmakers/lazyreview/business"
 	"github.com/michalopenmakers/lazyreview/config"
 	"github.com/michalopenmakers/lazyreview/logger"
-	"github.com/michalopenmakers/lazyreview/notifications"
 	"github.com/michalopenmakers/lazyreview/review"
 )
 
 //go:embed icon.png
 var iconPng []byte
+
+//go:embed icon_red.png
+var iconRedPng []byte
 
 var (
 	currentConfig      *config.Config
@@ -37,6 +39,7 @@ var (
 	acceptButton       *widget.Button
 	reviewsListScroll  *container.Scroll
 	isEditing          bool = false
+	prevReviewCount    int  = 0
 )
 
 type whiteDisabledTextTheme struct {
@@ -55,6 +58,15 @@ func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry)
 
 	reviews := business.GetReviews()
 	reviewsList.RemoveAll()
+
+	// Sprawdzamy, czy pojawiły się nowe review
+	if len(reviews) > prevReviewCount {
+		if desk, ok := mainApp.(desktop.App); ok {
+			redIcon := fyne.NewStaticResource("icon_red.png", iconRedPng)
+			desk.SetSystemTrayIcon(redIcon)
+		}
+	}
+	prevReviewCount = len(reviews)
 
 	if len(reviews) == 0 {
 		emptyLabel := widget.NewLabel("No reviews available")
@@ -330,12 +342,21 @@ func setupSystemTray() {
 func showWindow() {
 	mainWindow.Show()
 	mainWindow.RequestFocus()
+	// Przywracamy oryginalną ikonę tray po przywróceniu okna
+	if desk, ok := mainApp.(desktop.App); ok {
+		originalIcon := fyne.NewStaticResource("icon.png", iconPng)
+		desk.SetSystemTrayIcon(originalIcon)
+	}
 	setStatus("Window restored.")
 }
 
 func hideWindow() {
 	mainWindow.Hide()
-	notifications.SendNotification("LazyReview is running in the background.")
+	// Zmieniamy ikonę tray na czerwoną, zamiast wysyłać powiadomienie
+	if desk, ok := mainApp.(desktop.App); ok {
+		redIcon := fyne.NewStaticResource("icon_red.png", iconRedPng)
+		desk.SetSystemTrayIcon(redIcon)
+	}
 	setStatus("Window hidden, application running in the background.")
 }
 
@@ -434,7 +455,6 @@ func showSettingsDialog() {
 			dialog.ShowError(err, mainWindow)
 			return
 		}
-		notifications.SendNotification("Configuration saved.")
 		business.RestartMonitoring(currentConfig)
 		dialog.NewInformation("Settings saved", "Settings saved", mainWindow).Show()
 		setStatus("Settings saved.")
