@@ -32,6 +32,17 @@ var mainApp fyne.App
 var statusInfo *widget.Label
 var currentReviewIndex = -1
 
+type whiteDisabledTextTheme struct {
+	fyne.Theme
+}
+
+func (w whiteDisabledTextTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+	if name == theme.ColorNameDisabled {
+		return color.White
+	}
+	return w.Theme.Color(name, variant)
+}
+
 func updateReviewsList(reviewsList *fyne.Container, reviewDetails *widget.Entry) {
 	reviews := business.GetReviews()
 	reviewsList.RemoveAll()
@@ -81,6 +92,7 @@ var updateLogs func()
 
 func StartUI() {
 	mainApp = app.New()
+	mainApp.Settings().SetTheme(&whiteDisabledTextTheme{theme.DefaultTheme()})
 	mainWindow = mainApp.NewWindow("LazyReview")
 	mainWindow.Resize(fyne.NewSize(1920, 1080))
 	mainWindow.CenterOnScreen()
@@ -191,10 +203,17 @@ func buildDetailsSection(reviewDetails *widget.Entry) fyne.CanvasObject {
 	detailsLabel := widget.NewLabel("Review Details:")
 	detailsLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-	return container.NewVBox(
+	headerContainer := container.NewVBox(
 		detailsLabel,
 		widget.NewSeparator(),
-		reviewDetails,
+	)
+
+	return container.NewBorder(
+		headerContainer, // top
+		nil,             // bottom
+		nil,             // left
+		nil,             // right
+		reviewDetails,   // center - take up all available space
 	)
 }
 
