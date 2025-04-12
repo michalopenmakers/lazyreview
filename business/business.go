@@ -9,10 +9,6 @@ func InitializeApplication(cfg *config.Config) {
 	review.StartMonitoring(cfg)
 }
 
-func StartMonitoring(cfg *config.Config) {
-	InitializeApplication(cfg)
-}
-
 func GetReviews() []review.CodeReview {
 	return review.GetCodeReviews()
 }

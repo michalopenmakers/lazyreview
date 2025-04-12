@@ -132,16 +132,17 @@ func StartUI() {
 
 	updateLogs = func() {
 		logs := logger.GetLogs()
-		baseColor := theme.Color("text")
-		lighterColor := lightenColor(baseColor, 0.5)
-		hexColor := colorToHex(lighterColor)
+		logsDisplay.Segments = nil
 
-		var markupLogs strings.Builder
 		for _, log := range logs {
-			markupLogs.WriteString(fmt.Sprintf("<span style='font-family:monospace; color:%s;'> %s</span>\n\n", hexColor, log))
+			segment := &widget.TextSegment{
+				Text: " " + log + "\n\n",
+				Style: widget.RichTextStyle{
+					ColorName: theme.ColorNameForeground,
+				},
+			}
+			logsDisplay.Segments = append(logsDisplay.Segments, segment)
 		}
-		newRich := widget.NewRichTextFromMarkdown(markupLogs.String())
-		logsDisplay.Segments = newRich.Segments
 		logsDisplay.Refresh()
 	}
 
@@ -346,20 +347,4 @@ func showSettingsDialog() {
 		saveButton,
 	)
 	dialog.ShowCustom("Settings", "Close", content, mainWindow)
-}
-
-func lightenColor(c color.Color, factor float64) color.Color {
-	r, g, b, a := c.RGBA()
-	r8 := uint8(r >> 8)
-	g8 := uint8(g >> 8)
-	b8 := uint8(b >> 8)
-	newR := uint8(float64(r8) + (255-float64(r8))*factor)
-	newG := uint8(float64(g8) + (255-float64(g8))*factor)
-	newB := uint8(float64(b8) + (255-float64(b8))*factor)
-	return &color.NRGBA{R: newR, G: newG, B: newB, A: uint8(a >> 8)}
-}
-
-func colorToHex(c color.Color) string {
-	r, g, b, _ := c.RGBA()
-	return fmt.Sprintf("#%02x%02x%02x", uint8(r>>8), uint8(g>>8), uint8(b>>8))
 }

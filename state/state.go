@@ -39,7 +39,6 @@ func initialize() {
 		GitHubRepos:    make(map[string]*ProjectState),
 	}
 
-	// Ustaw ścieżkę do pliku stanu
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		homeDir = "."
