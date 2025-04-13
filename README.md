@@ -1,6 +1,5 @@
 # LazyReview
 
-[![Build and Test](https://github.com/michalopenmakers/lazyreview/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/michalopenmakers/lazyreview/actions/workflows/build-and-test.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/michalopenmakers/lazyreview)](https://goreportcard.com/report/github.com/michalopenmakers/lazyreview)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
